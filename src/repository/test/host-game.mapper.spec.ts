@@ -1,5 +1,5 @@
-import { AnswerMapper } from './host-game.mapper';
 import { AnswerStatus } from '../contracts/game-engine.dto';
+import { AnswerMapper } from '../mappers/host-game.mapper';
 
 describe('AnswerMapper', () => {
   describe('toDomain', () => {

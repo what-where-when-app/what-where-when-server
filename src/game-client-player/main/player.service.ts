@@ -2,15 +2,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { GameRepository } from '../../repository/game.repository';
+import { PlayerGameRepository } from '../../repository/player.game.repository';
 
 @Injectable()
 export class PlayerService {
-  constructor(private readonly gameRepository: GameRepository) {}
+  constructor(private readonly playerGameRepository: PlayerGameRepository) {}
 
   async checkGameByCode(passcode: number) {
     const game =
-      await this.gameRepository.findGameByPasscodeWithTeams(passcode);
+      await this.playerGameRepository.findGameByPasscodeWithTeams(passcode);
 
     if (!game) {
       throw new NotFoundException({

@@ -10,6 +10,7 @@ describe('GameRepository', () => {
       findMany: jest.fn(),
       create: jest.fn(),
       groupBy: jest.fn(),
+      upsert: jest.fn(),
     },
     game: {
       update: jest.fn(),
@@ -66,7 +67,7 @@ describe('GameRepository', () => {
         status: { name: 'UNSET' },
         participant: { team: { name: 'Team X' } },
       };
-      mockPrisma.answer.create.mockResolvedValue(mockSavedAnswer);
+      mockPrisma.answer.upsert.mockResolvedValue(mockSavedAnswer);
 
       const result = await repository.saveAnswer(18, 52, 'test');
 

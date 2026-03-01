@@ -37,6 +37,7 @@ export interface SubmitAnswerDto {
   gameId: number;
   participantId: number;
   answer: string;
+  questionId: number;
 }
 
 export interface GetAnswersDto {
@@ -66,6 +67,7 @@ export interface GameState {
   seconds: number;
   isPaused: boolean;
   activeQuestionId?: number;
+  activeQuestionNumber?: number;
   status?: GameStatus;
 }
 
@@ -98,4 +100,11 @@ export interface AnswerDomain {
   answerText: string;
   status: string;
   submittedAt: string;
+  isLate?: boolean;
+}
+
+export interface QuestionSettings {
+  timeToThink: number;
+  timeToAnswer: number;
+  gameId: number;
 }

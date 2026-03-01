@@ -1,5 +1,9 @@
-import type { Category, Game, GameParticipant, Team } from '@prisma/client';
-import type { HostGameCard, HostGameDetails } from '../contracts/game.dto';
+import type { Category, GameParticipant, Team } from '@prisma/client';
+import type {
+  GameSettings,
+  HostGameCard,
+  HostGameDetails,
+} from '../contracts/game.dto';
 import { coerceGameStatus } from '../types/guards';
 import {
   formatDateOfEvent,
@@ -9,7 +13,6 @@ import {
 import {
   AnswerDomain,
   AnswerStatus,
-  GamePublicDomain,
   ParticipantDomain,
 } from '../contracts/game-engine.dto';
 
@@ -71,6 +74,27 @@ function uniqueTeams(
   for (const p of participants) byId.set(p.team.id, p.team);
   return [...byId.values()];
 }
+export type GameSettingsLike = {
+  timeToThink: number;
+  timeToAnswer: number;
+  timeToDisputeEnd: number;
+  showLeaderboard: boolean;
+  showQuestions: boolean;
+  showAnswer: boolean;
+  canAppeal: boolean;
+};
+
+export function mapGameSettings(game: GameSettingsLike): GameSettings {
+  return {
+    time_to_think_sec: game.timeToThink,
+    time_to_answer_sec: game.timeToAnswer,
+    time_to_dispute_end_min: Math.round(game.timeToDisputeEnd / 60),
+    show_leaderboard: game.showLeaderboard,
+    show_questions: game.showQuestions,
+    show_answers: game.showAnswer,
+    can_appeal: game.canAppeal,
+  };
+}
 
 export function mapHostGameDetails(game: GameDetailsLike): HostGameDetails {
   const updatedAt = gameUpdatedAt(game);
@@ -82,15 +106,7 @@ export function mapHostGameDetails(game: GameDetailsLike): HostGameDetails {
     status: coerceGameStatus(game.status),
     passcode: String(game.passcode),
 
-    settings: {
-      time_to_think_sec: game.timeToThink,
-      time_to_answer_sec: game.timeToAnswer,
-      time_to_dispute_end_min: Math.round(game.timeToDisputeEnd / 60),
-      show_leaderboard: game.showLeaderboard,
-      show_questions: game.showQuestions,
-      show_answers: game.showAnswer,
-      can_appeal: game.canAppeal,
-    },
+    settings: mapGameSettings(game),
 
     categories: game.categoryLinks.map((l) => ({
       id: l.category.id,
@@ -137,24 +153,6 @@ export class PlayerMapper {
       isConnected: !data.isAvailable,
       socketId: data.socketId,
       teamName: data.team.name,
-    };
-  }
-
-  static toGamePublicDomain(
-    game: Game & { teams: Team[] },
-    participants: GameParticipant[],
-  ): GamePublicDomain {
-    return {
-      id: game.id,
-      name: game.name,
-      teams: game.teams.map((team) => {
-        const participant = participants.find((p) => p.teamId === team.id);
-        return {
-          id: team.id,
-          name: team.name,
-          isTaken: !participant?.isAvailable,
-        };
-      }),
     };
   }
 }
