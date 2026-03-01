@@ -33,6 +33,7 @@ export enum AdminRequestEvent {
   PauseTimer = 'admin:pause_timer', // Pauses the current question timer
   ResumeTimer = 'admin:resume_timer', // Resumes the current question timer
   NextQuestion = 'admin:next_question',
+  FinishGame = 'admin:finish_game',
 }
 
 /**
@@ -92,7 +93,7 @@ export class GameEngineGateway implements OnGatewayDisconnect {
     await this.gameService.startNextQuestion(
       data.gameId,
       (gId, seconds, phase, qId) => {
-        this.server.to(`game_${gId}`).emit(GameBroadcastEvent.TimerUpdate, {
+        this.server.to(this.getRoom(gId)).emit(GameBroadcastEvent.TimerUpdate, {
           seconds,
           phase,
           activeQuestionId: qId,
@@ -108,12 +109,12 @@ export class GameEngineGateway implements OnGatewayDisconnect {
     @MessageBody() data: { gameId: number },
   ) {
     await this.ensureAdmin(data.gameId, client);
-    client.join(`game_${data.gameId}_admins`);
-    client.join(`game_${data.gameId}`);
-
-    const answers = await this.gameRepository.getAnswersByGame(data.gameId);
-    const state = await this.gameService.getGameState(data.gameId);
-    client.emit(GameBroadcastEvent.SyncState, { state, answers });
+    client.join(this.getAdminRoom(data.gameId));
+    client.join(this.getRoom(data.gameId));
+    client.emit(
+      GameBroadcastEvent.SyncState,
+      await this.gameService.adminSyncGame(data.gameId),
+    );
   }
 
   @UseGuards(WsJwtGuard)
@@ -127,7 +128,7 @@ export class GameEngineGateway implements OnGatewayDisconnect {
     const currentStatus = await this.gameService.startGame(data.gameId);
 
     this.server
-      .to(`game_${data.gameId}`)
+      .to(this.getRoom(data.gameId))
       .emit(GameBroadcastEvent.StatusChanged, {
         status: currentStatus,
       });
@@ -143,19 +144,31 @@ export class GameEngineGateway implements OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: JoinGameDto,
   ) {
-    if (!data.gameId || !data.teamId) {
-      client.emit('error', { message: 'Invalid gameId or teamId' });
-      return;
-    }
-    client.join(`game_${data.gameId}`);
+    try {
+      const config = await this.gameService.getGameConfigAndJoinGame(
+        data.gameId,
+        data.teamId,
+        client.id,
+      );
 
-    const config = await this.gameService.getGameConfigAndJoinGame(
-      data.gameId,
-      data.teamId,
-      client.id,
-    );
-    client.emit(GameBroadcastEvent.SyncState, config);
-    this.logger.log(`Client ${client.id} joined game_${data.gameId}`);
+      client.join(this.getRoom(data.gameId));
+      client.emit(GameBroadcastEvent.SyncState, {
+        state: config.state,
+        participantId: config.participantId,
+      });
+
+      this.server
+        .to(this.getAdminRoom(data.gameId))
+        .emit(GameBroadcastEvent.SyncState, {
+          participants: config.participants,
+        });
+
+      this.logger.log(
+        `Client ${client.id} joined team ${data.teamId} in game ${data.gameId}`,
+      );
+    } catch (e) {
+      client.emit('error', { message: e.message });
+    }
   }
 
   @UseGuards(WsJwtGuard)
@@ -170,7 +183,7 @@ export class GameEngineGateway implements OnGatewayDisconnect {
       data.gameId,
       data.questionId,
       (gId, seconds, phase, qId) => {
-        this.server.to(`game_${gId}`).emit(GameBroadcastEvent.TimerUpdate, {
+        this.server.to(this.getRoom(gId)).emit(GameBroadcastEvent.TimerUpdate, {
           seconds,
           phase,
           activeQuestionId: qId,
@@ -187,16 +200,12 @@ export class GameEngineGateway implements OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: SubmitAnswerDto,
   ) {
-    const result = await this.gameService.processAnswer(
-      data.gameId,
-      data.participantId,
-      data.answer,
-    );
+    const result = await this.gameService.processAnswer(data);
 
     if (result) {
       client.emit(PlayerResponseEvent.AnswerReceived, { status: 'ok' });
       this.server
-        .to(`game_${data.gameId}_admins`)
+        .to(this.getAdminRoom(data.gameId))
         .emit(AdminResponseEvent.AnswerUpdate, result);
     }
   }
@@ -209,17 +218,20 @@ export class GameEngineGateway implements OnGatewayDisconnect {
   ) {
     await this.ensureAdmin(data.gameId, client);
 
-    const updatedAnswer = await this.gameRepository.judgeAnswer(
+    const { updatedAnswer, leaderboard } = await this.gameService.judgeAnswer(
+      data.gameId,
       data.answerId,
       data.verdict,
       client['user'].sub,
     );
 
     this.server
-      .to(`game_${data.gameId}_admins`)
+      .to(this.getAdminRoom(data.gameId))
       .emit(AdminResponseEvent.AnswerUpdate, updatedAnswer);
 
-    await this.broadcastLeaderboard(data.gameId);
+    this.server
+      .to(this.getRoom(data.gameId))
+      .emit(GameBroadcastEvent.LeaderboardUpdate, leaderboard);
   }
 
   @SubscribeMessage(PlayerRequestEvent.Dispute)
@@ -227,18 +239,28 @@ export class GameEngineGateway implements OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: DisputeDto,
   ) {
-    await this.gameRepository.createDispute(
-      data.answerId,
-      data.comment || 'No comment provided',
-    );
+    try {
+      const { updatedAnswer, leaderboard } =
+        await this.gameService.raiseDispute(
+          data.gameId,
+          data.answerId,
+          data.comment || 'No comment provided',
+        );
 
-    this.server
-      .to(`game_${data.gameId}_admins`)
-      .emit(AdminResponseEvent.NewDispute, {
-        answerId: data.answerId,
-      });
+      this.server
+        .to(this.getAdminRoom(data.gameId))
+        .emit(AdminResponseEvent.AnswerUpdate, updatedAnswer);
 
-    await this.broadcastLeaderboard(data.gameId);
+      this.server
+        .to(this.getAdminRoom(data.gameId))
+        .emit(AdminResponseEvent.NewDispute, { answerId: data.answerId });
+
+      this.server
+        .to(this.getRoom(data.gameId))
+        .emit(GameBroadcastEvent.LeaderboardUpdate, leaderboard);
+    } catch (e) {
+      client.emit('error', { message: e.message });
+    }
   }
 
   @UseGuards(WsJwtGuard)
@@ -249,7 +271,9 @@ export class GameEngineGateway implements OnGatewayDisconnect {
   ) {
     await this.ensureAdmin(data.gameId, client);
     await this.gameService.pauseTimer(data.gameId);
-    this.server.to(`game_${data.gameId}`).emit(GameBroadcastEvent.TimerPaused);
+    this.server
+      .to(this.getRoom(data.gameId))
+      .emit(GameBroadcastEvent.TimerPaused);
   }
 
   @UseGuards(WsJwtGuard)
@@ -260,7 +284,9 @@ export class GameEngineGateway implements OnGatewayDisconnect {
   ) {
     await this.ensureAdmin(data.gameId, client);
     await this.gameService.resumeTimer(data.gameId);
-    this.server.to(`game_${data.gameId}`).emit(GameBroadcastEvent.TimerResumed);
+    this.server
+      .to(this.getRoom(data.gameId))
+      .emit(GameBroadcastEvent.TimerResumed);
   }
 
   @UseGuards(WsJwtGuard)
@@ -281,10 +307,27 @@ export class GameEngineGateway implements OnGatewayDisconnect {
     }
   }
 
-  private async broadcastLeaderboard(gameId: number) {
-    const leaderboard = await this.gameRepository.getLeaderboard(gameId);
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage(AdminRequestEvent.FinishGame)
+  async handleFinishGame(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { gameId: number },
+  ) {
+    await this.ensureAdmin(data.gameId, client);
+    const status = await this.gameService.finishGame(data.gameId);
+
     this.server
-      .to(`game_${gameId}`)
-      .emit(GameBroadcastEvent.LeaderboardUpdate, leaderboard);
+      .to(this.getRoom(data.gameId))
+      .emit(GameBroadcastEvent.StatusChanged, {
+        status,
+      });
+  }
+
+  private getRoom(gameId: number) {
+    return `game_${gameId}`;
+  }
+
+  private getAdminRoom(gameId: number) {
+    return `game_${gameId}_admins`;
   }
 }

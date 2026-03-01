@@ -5,6 +5,7 @@ import { GameRepository } from '../repository/game.repository';
 import { GameEngineService } from './main/service/game-engine.service';
 import { GameEngineGateway } from './main/controller/game-engine.gateway';
 import { WsJwtGuard } from './main/guards/ws-jwt.guard';
+import { GameCacheService } from './main/service/game-cache.service';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { WsJwtGuard } from './main/guards/ws-jwt.guard';
     GameEngineGateway,
     GameRepository,
     WsJwtGuard,
+    GameCacheService,
   ],
 })
 export class GameEngineModule {}

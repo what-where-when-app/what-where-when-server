@@ -1,32 +1,78 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { GameId } from '../../../repository/contracts/common.dto';
 import {
+  AnswerDomain,
   GamePhase,
   GameState,
   GameStatus,
+  ParticipantDomain,
+  SubmitAnswerDto,
 } from '../../../repository/contracts/game-engine.dto';
 import { GameRepository } from '../../../repository/game.repository';
+import { GameCacheService } from './game-cache.service';
 
 @Injectable()
 export class GameEngineService {
   private readonly logger = new Logger(GameEngineService.name);
 
-  private readonly phase: Map<GameId, GamePhase> = new Map();
-  private readonly status: Map<GameId, GameStatus> = new Map();
-  private readonly remainingSeconds: Map<GameId, number> = new Map();
-  private readonly activeTimers: Map<GameId, NodeJS.Timeout> = new Map();
-  private readonly activeQuestionIds: Map<GameId, number> = new Map();
+  constructor(
+    private readonly gameRepository: GameRepository,
+    private readonly cache: GameCacheService,
+  ) {}
 
-  private readonly tickCallbacks: Map<
-    GameId,
-    (gameId: GameId, sec: number, phase: GamePhase, qId: number | null) => void
-  > = new Map();
-  private readonly phaseChangeCallbacks: Map<
-    GameId,
-    (phase: GamePhase) => void
-  > = new Map();
+  async finishGame(gameId: GameId): Promise<GameStatus> {
+    this.cleanupTimer(gameId);
 
-  constructor(private readonly gameRepository: GameRepository) {}
+    const setStatusTo = GameStatus.FINISHED;
+
+    try {
+      await this.gameRepository.updateStatus(gameId, setStatusTo);
+      await this.cache.setStatus(gameId, setStatusTo);
+
+      this.logger.log(`Game ${gameId} finalized and set to FINISHED`);
+      return setStatusTo;
+    } catch (error) {
+      this.logger.error(`Failed to finish game ${gameId}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async raiseDispute(gameId: number, answerId: number, comment: string) {
+    const settings = await this.gameRepository.getGameSettings(gameId);
+
+    if (!settings) {
+      throw new Error('Game not found');
+    }
+
+    if (!settings.can_appeal) {
+      throw new Error('Appeals are disabled for this game');
+    }
+
+    await this.gameRepository.createDispute(answerId, comment);
+
+    const [updatedAnswer, leaderboard] = await Promise.all([
+      this.gameRepository.getAnswerById(answerId),
+      this.gameRepository.getLeaderboard(gameId),
+    ]);
+
+    return { updatedAnswer, leaderboard };
+  }
+
+  async judgeAnswer(
+    gameId: number,
+    answerId: number,
+    verdict: string,
+    adminId: number,
+  ) {
+    await this.gameRepository.judgeAnswer(answerId, verdict, adminId);
+
+    const [updatedAnswer, leaderboard] = await Promise.all([
+      this.gameRepository.getAnswerById(answerId),
+      this.gameRepository.getLeaderboard(gameId),
+    ]);
+
+    return { updatedAnswer, leaderboard };
+  }
 
   async startNextQuestion(
     gameId: GameId,
@@ -37,43 +83,52 @@ export class GameEngineService {
       qId: number | null,
     ) => void,
   ) {
-    const currentQId = this.activeQuestionIds.get(gameId);
+    const currentQId = await this.cache.getActiveQuestionId(gameId);
+    const orderedIds = await this.gameRepository.getOrderedQuestionIds(gameId);
 
-    const gameDetails = await this.gameRepository.getGameStructure(gameId);
-    if (!gameDetails) throw new Error('Game not found');
+    if (orderedIds.length === 0) {
+      this.logger.warn(`Game ${gameId} has no questions configured.`);
+      return null;
+    }
 
-    const allQuestions = gameDetails.rounds
-      .toSorted((a, b) => a.round_number - b.round_number)
-      .flatMap((r) =>
-        r.questions.toSorted((a, b) => a.question_number - b.question_number),
+    const currentIndex = currentQId ? orderedIds.indexOf(currentQId) : -1;
+
+    const nextQuestionId = orderedIds[currentIndex + 1];
+
+    if (!nextQuestionId) {
+      this.logger.log(
+        `No more questions for game ${gameId}. Marking as finished?`,
       );
-
-    const currentIndex = currentQId
-      ? allQuestions.findIndex((q) => q.id === currentQId)
-      : -1;
-    const nextQuestion = allQuestions[currentIndex + 1];
-
-    if (!nextQuestion) {
-      this.logger.warn(`No more questions for game ${gameId}`);
       return null;
     }
 
-    if (!nextQuestion.id) {
-      this.logger.error(`No id fo question ${gameId}`);
-      return null;
-    }
-
-    await this.startQuestionCycle(gameId, nextQuestion.id, onTick, () => {});
-    return nextQuestion.id;
+    await this.startQuestionCycle(gameId, nextQuestionId, onTick, () => {});
+    return nextQuestionId;
   }
 
   async startGame(gameId: GameId): Promise<GameStatus> {
-    const setStatusTo = GameStatus.LIVE;
-    await this.gameRepository.updateStatus(gameId, setStatusTo);
-    this.status.set(gameId, setStatusTo);
-    this.logger.log(`Game ${gameId} started by host`);
+    const currentStatus = await this.cache.getStatus(gameId);
+    if (currentStatus === GameStatus.LIVE) {
+      this.logger.warn(`Game ${gameId} is already LIVE. Skipping update.`);
+      return GameStatus.LIVE;
+    }
+    if (currentStatus === GameStatus.FINISHED) {
+      this.logger.error(`Attempted to start a FINISHED game: ${gameId}`);
+      throw new Error('Cannot start a game that is already finished');
+    }
 
-    return setStatusTo;
+    const setStatusTo = GameStatus.LIVE;
+
+    try {
+      await this.gameRepository.updateStatus(gameId, setStatusTo);
+      await this.cache.setStatus(gameId, setStatusTo);
+
+      this.logger.log(`Game ${gameId} successfully started by host`);
+      return setStatusTo;
+    } catch (error) {
+      this.logger.error(`Failed to start game ${gameId}: ${error.message}`);
+      throw error;
+    }
   }
 
   async validateHost(gameId: GameId, userId: number): Promise<boolean> {
@@ -86,59 +141,101 @@ export class GameEngineService {
     teamId: number,
     socketId: string,
   ) {
+    const status = await this.cache.getStatus(gameId);
+    if (status === GameStatus.FINISHED) {
+      throw new Error('Cannot join: game is already finished');
+    }
+
     const participant = await this.gameRepository.teamJoinGame(
       gameId,
       teamId,
       socketId,
     );
 
+    const [state, participants] = await Promise.all([
+      this.getGameState(participant.gameId),
+      this.gameRepository.getParticipantsByGame(participant.gameId),
+    ]);
+
     return {
-      state: await this.getGameState(participant.gameId),
+      state,
       participantId: participant.id,
+      participants,
+    };
+  }
+
+  public async adminSyncGame(gameId: GameId): Promise<{
+    state: GameState;
+    answers: AnswerDomain[];
+    participants: ParticipantDomain[];
+  }> {
+    const [answers, state, participants] = await Promise.all([
+      this.gameRepository.getAnswersByGame(gameId),
+      this.getGameState(gameId),
+      this.gameRepository.getParticipantsByGame(gameId),
+    ]);
+    return {
+      state,
+      answers,
+      participants,
     };
   }
 
   public async getGameState(gameId: GameId): Promise<GameState> {
-    let gameStatus = this.status.get(gameId);
-    if (!gameStatus) {
-      gameStatus = (await this.gameRepository.findById(gameId))
-        ?.status as GameStatus;
-    }
-    if (!gameStatus) {
-      console.log(`Game status is null`);
-    }
+    const [status, phase, seconds, activeQuestionId, isPaused] =
+      await Promise.all([
+        this.cache.getStatus(gameId),
+        this.getPhase(gameId),
+        this.cache.getRemainingSeconds(gameId),
+        this.cache.getActiveQuestionId(gameId),
+        this.isPaused(gameId),
+      ]);
 
     return {
-      phase: this.getPhase(gameId),
-      seconds: this.remainingSeconds.get(gameId) ?? 0,
-      activeQuestionId: this.activeQuestionIds.get(gameId),
-      isPaused:
-        !this.activeTimers.has(gameId) &&
-        this.getPhase(gameId) !== GamePhase.IDLE,
-      status: gameStatus,
+      phase: phase,
+      seconds: seconds ?? 0,
+      activeQuestionId: activeQuestionId,
+      isPaused: isPaused,
+      status: status,
     };
   }
 
-  getPhase(gameId: number): GamePhase {
-    return this.phase.get(gameId) || GamePhase.IDLE;
+  async getPhase(gameId: number): Promise<GamePhase> {
+    return (await this.cache.getPhase(gameId)) || GamePhase.IDLE;
   }
 
   async startQuestionCycle(
     gameId: GameId,
     questionId: number,
-    onTick: (gameId: number, sec: number, phase: GamePhase, qId) => void,
+    onTick: (gameId: GameId, sec: number, phase: GamePhase, qId: number) => void,
     onPhaseChange: (phase: GamePhase) => void,
   ) {
+    const status = await this.cache.getStatus(gameId);
+    if (status !== GameStatus.LIVE) {
+      throw new Error(`Cannot start question: game is in ${status} status`);
+    }
+
+    const questionSettings =
+      await this.gameRepository.getQuestionSettings(questionId);
+    if (questionSettings?.gameId !== gameId) {
+      throw new Error('Question not found or does not belong to this game');
+    }
+
     this.cleanupTimer(gameId);
 
     try {
       await this.gameRepository.activateQuestion(gameId, questionId);
-      this.activeQuestionIds.set(gameId, questionId);
+      await this.cache.setActiveQuestionId(gameId, questionId);
 
-      this.tickCallbacks.set(gameId, onTick);
-      this.phaseChangeCallbacks.set(gameId, onPhaseChange);
+      this.cache.setCallbacks(gameId, onTick, onPhaseChange);
 
-      this.transitionToPhase(gameId, GamePhase.THINKING, 60);
+      await this.transitionToPhase(
+        gameId,
+        GamePhase.THINKING,
+        questionSettings.timeToThink,
+      );
+
+      this.logger.log(`Started question ${questionId} for game ${gameId}`);
     } catch (e) {
       this.logger.error(
         `Error starting cycle for game ${gameId}: ${e.message}`,
@@ -147,117 +244,154 @@ export class GameEngineService {
     }
   }
 
-  async processAnswer(gameId: number, participantId: number, text: string) {
-    const qId = this.activeQuestionIds.get(gameId);
-    if (!qId) {
-      this.logger.warn(
-        `Answer received for game ${gameId} but no active question found.`,
-      );
+  async processAnswer(data: SubmitAnswerDto): Promise<AnswerDomain | null> {
+    const status = await this.cache.getStatus(data.gameId);
+
+    if (status !== GameStatus.LIVE) {
+      this.logger.warn(`Answer rejected: game ${data.gameId} is ${status}`);
       return null;
     }
 
-    return this.gameRepository.saveAnswer(participantId, qId, text);
+    // TODO: review logic
+    const [phase, activeQId] = await Promise.all([
+      this.getPhase(data.gameId),
+      this.cache.getActiveQuestionId(data.gameId),
+    ]);
+
+    const isLate = phase === GamePhase.IDLE || activeQId !== data.questionId;
+
+    if (isLate) {
+      this.logger.log(
+        `Late submission for game ${data.gameId}. Question: ${data.questionId}, Phase: ${phase}, ActiveQ: ${activeQId}`,
+      );
+    }
+
+    const savedAnswer = await this.gameRepository.saveAnswer(
+      data.participantId,
+      data.questionId,
+      data.answer,
+    );
+    return {
+      ...savedAnswer,
+      isLate,
+    };
   }
 
   async pauseTimer(gameId: GameId) {
     this.stopTimer(gameId);
-    this.notifyTick(gameId);
+    await this.notifyTick(gameId);
   }
 
   async resumeTimer(gameId: GameId) {
-    if (
-      !this.activeTimers.has(gameId) &&
-      this.getPhase(gameId) !== GamePhase.IDLE
-    ) {
-      this.startInterval(gameId);
+    if (await this.isPaused(gameId)) {
+      await this.startInterval(gameId);
     }
   }
 
-  async adjustTime(gameId: GameId, delta: number) {
-    const current = this.remainingSeconds.get(gameId) ?? 0;
+  private async isPaused(gameId: GameId) {
+    return (
+      this.cache.getTimer(gameId) === undefined &&
+      (await this.getPhase(gameId)) !== GamePhase.IDLE
+    );
+  }
 
-    if (this.getPhase(gameId) === GamePhase.IDLE) return;
+  async adjustTime(gameId: GameId, delta: number) {
+    if ((await this.getPhase(gameId)) === GamePhase.IDLE) return;
+
+    const current = (await this.cache.getRemainingSeconds(gameId)) ?? 0;
 
     let newVal = current + delta;
 
     if (newVal <= 0) {
       newVal = 0;
-      this.remainingSeconds.set(gameId, newVal);
-      this.notifyTick(gameId);
-      this.handlePhaseCompletion(gameId);
+      await this.cache.setRemainingSeconds(gameId, newVal);
+      await this.notifyTick(gameId);
+      await this.handlePhaseCompletion(gameId);
     } else {
-      this.remainingSeconds.set(gameId, newVal);
-      this.notifyTick(gameId);
+      await this.cache.setRemainingSeconds(gameId, newVal);
+      await this.notifyTick(gameId);
     }
   }
 
-  private transitionToPhase(gameId: GameId, phase: GamePhase, seconds: number) {
-    this.phase.set(gameId, phase);
-    this.remainingSeconds.set(gameId, seconds);
+  private async transitionToPhase(
+    gameId: GameId,
+    phase: GamePhase,
+    seconds: number,
+  ) {
+    await this.cache.setPhase(gameId, phase);
+    await this.cache.setRemainingSeconds(gameId, seconds);
 
-    this.notifyTick(gameId);
-    this.startInterval(gameId);
+    await this.notifyTick(gameId);
+    await this.startInterval(gameId);
   }
 
-  private startInterval(gameId: GameId) {
-    if (this.activeTimers.has(gameId)) return;
+  private async startInterval(gameId: GameId) {
+    if (this.cache.getTimer(gameId) !== undefined) return;
 
-    const interval = setInterval(() => {
-      let current = this.remainingSeconds.get(gameId) || 0;
+    const interval = setInterval(async () => {
+      let current = (await this.cache.getRemainingSeconds(gameId)) || 0;
 
       if (current > 0) {
         current--;
-        this.remainingSeconds.set(gameId, current);
-        this.notifyTick(gameId);
+        await this.cache.setRemainingSeconds(gameId, current);
+        await this.notifyTick(gameId);
       }
 
       if (current <= 0) {
-        this.handlePhaseCompletion(gameId);
+        await this.handlePhaseCompletion(gameId);
       }
     }, 1000);
 
-    this.activeTimers.set(gameId, interval);
+    this.cache.setTimer(gameId, interval);
   }
 
-  private handlePhaseCompletion(gameId: GameId) {
+  private async handlePhaseCompletion(gameId: GameId) {
     this.stopTimer(gameId);
-    const currentPhase = this.getPhase(gameId);
+    const currentPhase = await this.getPhase(gameId);
 
     if (currentPhase === GamePhase.THINKING) {
-      this.transitionToPhase(gameId, GamePhase.ANSWERING, 10);
-    } else if (currentPhase === GamePhase.ANSWERING) {
-      this.phase.set(gameId, GamePhase.IDLE);
-      this.remainingSeconds.set(gameId, 0);
+      const questionId = await this.cache.getActiveQuestionId(gameId);
+      const questionSettings = await this.gameRepository.getQuestionSettings(
+        questionId!,
+      );
 
-      const onPhaseChange = this.phaseChangeCallbacks.get(gameId);
+      await this.transitionToPhase(
+        gameId,
+        GamePhase.ANSWERING,
+        questionSettings?.timeToAnswer ?? 10,
+      );
+    } else if (currentPhase === GamePhase.ANSWERING) {
+      await this.cache.setPhase(gameId, GamePhase.IDLE);
+      await this.cache.setRemainingSeconds(gameId, 0);
+
+      const onPhaseChange = this.cache.getPhaseChangeCallback(gameId);
       if (onPhaseChange) onPhaseChange(GamePhase.IDLE);
 
       this.cleanupTimer(gameId);
     }
   }
 
-  private notifyTick(gameId: GameId) {
-    const onTick = this.tickCallbacks.get(gameId);
-    const seconds = this.remainingSeconds.get(gameId) ?? 0;
-    const phase = this.getPhase(gameId);
-    const qId = this.activeQuestionIds.get(gameId) ?? null;
+  private async notifyTick(gameId: GameId) {
+    const onTick = this.cache.getTickCallback(gameId);
+    const seconds = (await this.cache.getRemainingSeconds(gameId)) ?? 0;
+    const phase = await this.getPhase(gameId);
+    const qId = (await this.cache.getActiveQuestionId(gameId)) ?? null;
 
     if (onTick) {
-      onTick(Number(gameId), seconds, phase, qId);
+      onTick(gameId, seconds, phase, qId);
     }
   }
 
   private stopTimer(gameId: GameId) {
-    const timer = this.activeTimers.get(gameId);
+    const timer = this.cache.getTimer(gameId);
     if (timer) {
       clearInterval(timer);
-      this.activeTimers.delete(gameId);
+      this.cache.clearTimer(gameId);
     }
   }
 
   private cleanupTimer(gameId: GameId) {
     this.stopTimer(gameId);
-    this.tickCallbacks.delete(gameId);
-    this.phaseChangeCallbacks.delete(gameId);
+    this.cache.removeCallbacks(gameId);
   }
 }

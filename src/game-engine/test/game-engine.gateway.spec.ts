@@ -8,6 +8,7 @@ import {
   GameEngineGateway,
 } from '../main/controller/game-engine.gateway';
 import { WsJwtGuard } from '../main/guards/ws-jwt.guard';
+import { GameStatus } from '../../repository/contracts/game-engine.dto';
 
 describe('GameEngineGateway', () => {
   let gateway: GameEngineGateway;
@@ -18,6 +19,7 @@ describe('GameEngineGateway', () => {
     startNextQuestion: jest.fn(),
     getGameState: jest.fn(),
     startGame: jest.fn(),
+    adminSyncGame: jest.fn(),
   };
 
   const mockRepo = {
@@ -57,6 +59,25 @@ describe('GameEngineGateway', () => {
     gateway.server = mockServer;
   });
 
+  describe('handleStartGame', () => {
+    it('should call service.startGame and broadcast status change', async () => {
+      const gameId = 1;
+      mockService.validateHost.mockResolvedValue(true);
+      mockService.startGame.mockResolvedValue(GameStatus.LIVE);
+
+      await gateway.handleStartGame(mockSocket, { gameId });
+
+      expect(mockService.startGame).toHaveBeenCalledWith(gameId);
+      expect(mockServer.to).toHaveBeenCalledWith(`game_${gameId}`);
+      expect(mockServer.emit).toHaveBeenCalledWith(
+        GameBroadcastEvent.StatusChanged,
+        {
+          status: GameStatus.LIVE,
+        },
+      );
+    });
+  });
+
   describe('handleNextQuestion', () => {
     it('should throw error if user is not the host', async () => {
       mockService.validateHost.mockResolvedValue(false);
@@ -79,21 +100,24 @@ describe('GameEngineGateway', () => {
   });
 
   describe('handleAdminSync', () => {
-    it('should join rooms and emit full state', async () => {
+    it('should call adminSyncGame and emit data to admin', async () => {
+      const gameId = 1;
+      const mockSyncData = {
+        state: { status: 'LIVE' },
+        answers: [],
+        participants: [],
+      };
+
       mockService.validateHost.mockResolvedValue(true);
-      mockRepo.getAnswersByGame.mockResolvedValue([]);
-      mockService.getGameState.mockResolvedValue({ status: 'LIVE' });
+      mockService.adminSyncGame = jest.fn().mockResolvedValue(mockSyncData);
 
-      await gateway.handleAdminSync(mockSocket, { gameId: 1 });
+      await gateway.handleAdminSync(mockSocket, { gameId });
 
-      expect(mockSocket.join).toHaveBeenCalledWith('game_1_admins');
-      expect(mockSocket.join).toHaveBeenCalledWith('game_1');
+      expect(mockSocket.join).toHaveBeenCalledWith(`game_${gameId}_admins`);
+      expect(mockService.adminSyncGame).toHaveBeenCalledWith(gameId);
       expect(mockSocket.emit).toHaveBeenCalledWith(
         GameBroadcastEvent.SyncState,
-        expect.objectContaining({
-          state: { status: 'LIVE' },
-          answers: [],
-        }),
+        mockSyncData,
       );
     });
   });
