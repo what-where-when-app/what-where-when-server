@@ -3,6 +3,7 @@ import { GameId } from '../../../repository/contracts/common.dto';
 import {
   GamePhase,
   GameStatus,
+  QuestionData,
 } from '../../../repository/contracts/game-engine.dto';
 import { GameRepository } from '../../../repository/game.repository';
 
@@ -11,21 +12,24 @@ export class GameCacheService {
   private readonly phases: Map<GameId, GamePhase> = new Map();
   private readonly statuses: Map<GameId, GameStatus> = new Map();
   private readonly remainingSeconds: Map<GameId, number> = new Map();
-  private readonly activeQuestionIds: Map<GameId, number> = new Map();
+  private readonly activeQuestionIds: Map<GameId, QuestionData> = new Map();
 
   private readonly activeTimers: Map<GameId, NodeJS.Timeout> = new Map();
   private readonly tickCallbacks: Map<
     GameId,
-    (gameId: GameId, sec: number, phase: GamePhase, qId: number | null) => void
+    (
+      gameId: GameId,
+      sec: number,
+      phase: GamePhase,
+      qData: QuestionData | null,
+    ) => void
   > = new Map();
   private readonly phaseChangeCallbacks: Map<
     GameId,
     (phase: GamePhase) => void
   > = new Map();
 
-  constructor(
-    private readonly gameRepository: GameRepository,
-  ) {}
+  constructor(private readonly gameRepository: GameRepository) {}
 
   public async getPhase(gameId: GameId): Promise<GamePhase> {
     return this.phases.get(gameId) || GamePhase.IDLE;
@@ -63,26 +67,27 @@ export class GameCacheService {
     this.remainingSeconds.set(gameId, seconds);
   }
 
-  public async getActiveQuestionId(
+  public async getActiveQuestionData(
     gameId: GameId,
-  ): Promise<number | undefined> {
-    let qId = this.activeQuestionIds.get(gameId);
+  ): Promise<QuestionData | undefined> {
+    let questionData = this.activeQuestionIds.get(gameId);
 
-    if (!qId) {
-      const dbQId = await this.gameRepository.findActiveQuestionId(gameId);
-      if (dbQId) {
-        qId = dbQId;
-        this.activeQuestionIds.set(gameId, qId);
+    if (!questionData) {
+      const dbQuestionData =
+        await this.gameRepository.findActiveQuestionData(gameId);
+      if (dbQuestionData) {
+        questionData = dbQuestionData;
+        this.activeQuestionIds.set(gameId, questionData);
       }
     }
-    return qId;
+    return questionData;
   }
 
-  public async setActiveQuestionId(
+  public async setActiveQuestionData(
     gameId: GameId,
-    questionId: number,
+    questionData: QuestionData,
   ): Promise<void> {
-    this.activeQuestionIds.set(gameId, questionId);
+    this.activeQuestionIds.set(gameId, questionData);
   }
 
   public getTimer(gameId: GameId): NodeJS.Timeout | undefined {
@@ -103,7 +108,12 @@ export class GameCacheService {
 
   public setCallbacks(
     gameId: GameId,
-    onTick: (gameId: number, sec: number, phase: GamePhase, qId) => void,
+    onTick: (
+      gameId: number,
+      sec: number,
+      phase: GamePhase,
+      qData: QuestionData | null,
+    ) => void,
     onPhaseChange: (phase: GamePhase) => void,
   ): void {
     this.tickCallbacks.set(gameId, onTick);

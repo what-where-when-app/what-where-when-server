@@ -3,6 +3,7 @@ import { GameRepository } from '../../repository/game.repository';
 import {
   GamePhase,
   GameStatus,
+  QuestionData,
 } from '../../repository/contracts/game-engine.dto';
 import { GameEngineService } from '../main/service/game-engine.service';
 import { GameCacheService } from '../main/service/game-cache.service';
@@ -35,8 +36,8 @@ describe('GameEngineService', () => {
     setStatus: jest.fn(),
     getRemainingSeconds: jest.fn(),
     setRemainingSeconds: jest.fn(),
-    getActiveQuestionId: jest.fn(),
-    setActiveQuestionId: jest.fn(),
+    getActiveQuestionData: jest.fn(),
+    setActiveQuestionData: jest.fn(),
     _callbacks: new Map(),
     setCallbacks: jest.fn(function (id, onTick, onPhaseChange) {
       this._callbacks.set(id, { onTick, onPhaseChange });
@@ -130,6 +131,7 @@ describe('GameEngineService', () => {
         timeToThink: 45,
         timeToAnswer: 15,
         gameId: 1,
+        questionNumber: 1,
       });
 
       await service.startQuestionCycle(
@@ -161,16 +163,23 @@ describe('GameEngineService', () => {
       jest.useFakeTimers();
       const gameId = 1;
       const questionId = 101;
+      const questionNumber = 1;
+
+      const qData = {
+        questionId,
+        questionNumber,
+      };
 
       let seconds = 60;
       let currentPhase = GamePhase.IDLE;
-      let activeQId: number | null = null;
+      let activeQData: QuestionData | null = null;
 
       mockGameCacheService.getStatus.mockResolvedValue(GameStatus.LIVE);
       mockGameRepository.getQuestionSettings.mockResolvedValue({
         timeToThink: 60,
         timeToAnswer: 10,
         gameId,
+        questionNumber: questionNumber,
       });
 
       mockGameCacheService.getRemainingSeconds.mockImplementation(
@@ -187,12 +196,12 @@ describe('GameEngineService', () => {
       mockGameCacheService.setPhase.mockImplementation(async (id, p) => {
         currentPhase = p;
       });
-      mockGameCacheService.getActiveQuestionId.mockImplementation(
-        async () => activeQId,
+      mockGameCacheService.getActiveQuestionData.mockImplementation(
+        async () => activeQData,
       );
-      mockGameCacheService.setActiveQuestionId.mockImplementation(
-        async (id, qid) => {
-          activeQId = qid;
+      mockGameCacheService.setActiveQuestionData.mockImplementation(
+        async (id, qData) => {
+          activeQData = qData;
         },
       );
 
@@ -204,7 +213,7 @@ describe('GameEngineService', () => {
         gameId,
         60,
         GamePhase.THINKING,
-        questionId,
+        qData,
       );
 
       onTick.mockClear();
@@ -220,7 +229,7 @@ describe('GameEngineService', () => {
         gameId,
         10,
         GamePhase.ANSWERING,
-        questionId,
+        qData,
       );
 
       jest.useRealTimers();
@@ -230,7 +239,10 @@ describe('GameEngineService', () => {
   describe('startNextQuestion (Game Flow)', () => {
     it('should start the next question if it exists', async () => {
       const gameId = 1;
-      mockGameCacheService.getActiveQuestionId.mockResolvedValue(101);
+      mockGameCacheService.getActiveQuestionData.mockResolvedValue({
+        questionId: 101,
+        questionNumber: 1,
+      });
       mockGameRepository.getOrderedQuestionIds.mockResolvedValue([
         101, 102, 103,
       ]);
@@ -246,7 +258,10 @@ describe('GameEngineService', () => {
 
     it('should return null if no more questions', async () => {
       const gameId = 1;
-      mockGameCacheService.getActiveQuestionId.mockResolvedValue(103);
+      mockGameCacheService.getActiveQuestionData.mockResolvedValue({
+        questionId: 103,
+        questionNumber: 1,
+      });
       mockGameRepository.getOrderedQuestionIds.mockResolvedValue([
         101, 102, 103,
       ]);
@@ -302,7 +317,7 @@ describe('GameEngineService', () => {
 
       mockGameCacheService.getStatus.mockResolvedValue(GameStatus.LIVE);
       mockGameCacheService.getPhase.mockResolvedValue(GamePhase.IDLE);
-      mockGameCacheService.getActiveQuestionId.mockResolvedValue(null);
+      mockGameCacheService.getActiveQuestionData.mockResolvedValue(null);
 
       const result = await service.processAnswer(dto);
 
@@ -324,7 +339,10 @@ describe('GameEngineService', () => {
 
       mockGameCacheService.getStatus.mockResolvedValue(GameStatus.LIVE);
       mockGameCacheService.getPhase.mockResolvedValue(GamePhase.THINKING);
-      mockGameCacheService.getActiveQuestionId.mockResolvedValue(101);
+      mockGameCacheService.getActiveQuestionData.mockResolvedValue({
+        questionId: 101,
+        questionNumber: 1,
+      });
 
       const result = await service.processAnswer(dto);
 
@@ -347,7 +365,10 @@ describe('GameEngineService', () => {
 
       mockGameCacheService.getStatus.mockResolvedValue(GameStatus.LIVE);
       mockGameCacheService.getPhase.mockResolvedValue(GamePhase.ANSWERING);
-      mockGameCacheService.getActiveQuestionId.mockResolvedValue(101);
+      mockGameCacheService.getActiveQuestionData.mockResolvedValue({
+        questionId: 101,
+        questionNumber: 1,
+      });
 
       const result = await service.processAnswer(dto);
 

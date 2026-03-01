@@ -19,6 +19,7 @@ import {
   DisputeStatus,
   GameStatus,
   ParticipantDomain,
+  QuestionData,
   QuestionSettings,
 } from './contracts/game-engine.dto';
 
@@ -66,6 +67,7 @@ export class GameRepository {
         timeToThink: true,
         timeToAnswer: true,
         round: { select: { gameId: true } },
+        questionNumber: true
       },
     });
 
@@ -75,6 +77,7 @@ export class GameRepository {
       timeToThink: question.timeToThink,
       timeToAnswer: question.timeToAnswer,
       gameId: question.round.gameId,
+      questionNumber: question.questionNumber
     };
   }
 
@@ -285,14 +288,20 @@ export class GameRepository {
       .sort((a, b) => b.score - a.score);
   }
 
-  async findActiveQuestionId(gameId: number): Promise<number | null> {
+  async findActiveQuestionData(gameId: number): Promise<QuestionData | null> {
     const question = await this.prisma.question.findFirst({
       where: {
         round: { gameId },
         isActive: true,
       },
-      select: { id: true },
+      select: {
+        id: true,
+        questionNumber: true
+      },
     });
-    return question?.id ?? null;
+    return question ? {
+      questionId: question?.id,
+      questionNumber: question?.questionNumber
+    } : null;
   }
 }

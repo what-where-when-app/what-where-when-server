@@ -66,9 +66,14 @@ export interface GameState {
   phase: GamePhase;
   seconds: number;
   isPaused: boolean;
-  activeQuestionId?: number;
-  activeQuestionNumber?: number;
+  activeQuestionId?: number,
+  activeQuestionNumber?: number,
   status?: GameStatus;
+}
+
+export interface QuestionData {
+  questionId: number;
+  questionNumber: number;
 }
 
 export interface ParticipantDomain {
@@ -78,18 +83,6 @@ export interface ParticipantDomain {
   socketId: string | null;
   isConnected: boolean;
   teamName: string;
-}
-
-export interface TeamSelectionDomain {
-  id: number;
-  name: string;
-  isTaken: boolean;
-}
-
-export interface GamePublicDomain {
-  id: number;
-  name: string;
-  teams: TeamSelectionDomain[];
 }
 
 export interface AnswerDomain {
@@ -106,5 +99,6 @@ export interface AnswerDomain {
 export interface QuestionSettings {
   timeToThink: number;
   timeToAnswer: number;
+  questionNumber: number;
   gameId: number;
 }

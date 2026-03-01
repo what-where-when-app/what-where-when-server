@@ -6,6 +6,7 @@ import {
   GameState,
   GameStatus,
   ParticipantDomain,
+  QuestionData,
   SubmitAnswerDto,
 } from '../../../repository/contracts/game-engine.dto';
 import { GameRepository } from '../../../repository/game.repository';
@@ -80,10 +81,10 @@ export class GameEngineService {
       gameId: number,
       sec: number,
       phase: GamePhase,
-      qId: number | null,
+      qData: QuestionData | null,
     ) => void,
   ) {
-    const currentQId = await this.cache.getActiveQuestionId(gameId);
+    const currentQuestionData = await this.cache.getActiveQuestionData(gameId);
     const orderedIds = await this.gameRepository.getOrderedQuestionIds(gameId);
 
     if (orderedIds.length === 0) {
@@ -91,7 +92,9 @@ export class GameEngineService {
       return null;
     }
 
-    const currentIndex = currentQId ? orderedIds.indexOf(currentQId) : -1;
+    const currentIndex = currentQuestionData?.questionId
+      ? orderedIds.indexOf(currentQuestionData.questionId)
+      : -1;
 
     const nextQuestionId = orderedIds[currentIndex + 1];
 
@@ -182,19 +185,20 @@ export class GameEngineService {
   }
 
   public async getGameState(gameId: GameId): Promise<GameState> {
-    const [status, phase, seconds, activeQuestionId, isPaused] =
+    const [status, phase, seconds, activeQuestionData, isPaused] =
       await Promise.all([
         this.cache.getStatus(gameId),
         this.getPhase(gameId),
         this.cache.getRemainingSeconds(gameId),
-        this.cache.getActiveQuestionId(gameId),
+        this.cache.getActiveQuestionData(gameId),
         this.isPaused(gameId),
       ]);
 
     return {
       phase: phase,
       seconds: seconds ?? 0,
-      activeQuestionId: activeQuestionId,
+      activeQuestionId: activeQuestionData?.questionId,
+      activeQuestionNumber: activeQuestionData?.questionNumber,
       isPaused: isPaused,
       status: status,
     };
@@ -207,7 +211,12 @@ export class GameEngineService {
   async startQuestionCycle(
     gameId: GameId,
     questionId: number,
-    onTick: (gameId: GameId, sec: number, phase: GamePhase, qId: number) => void,
+    onTick: (
+      gameId: GameId,
+      sec: number,
+      phase: GamePhase,
+      qData: QuestionData | null,
+    ) => void,
     onPhaseChange: (phase: GamePhase) => void,
   ) {
     const status = await this.cache.getStatus(gameId);
@@ -225,7 +234,10 @@ export class GameEngineService {
 
     try {
       await this.gameRepository.activateQuestion(gameId, questionId);
-      await this.cache.setActiveQuestionId(gameId, questionId);
+      await this.cache.setActiveQuestionData(gameId, {
+        questionId,
+        questionNumber: questionSettings.questionNumber,
+      });
 
       this.cache.setCallbacks(gameId, onTick, onPhaseChange);
 
@@ -253,16 +265,18 @@ export class GameEngineService {
     }
 
     // TODO: review logic
-    const [phase, activeQId] = await Promise.all([
+    const [phase, activeQuestionData] = await Promise.all([
       this.getPhase(data.gameId),
-      this.cache.getActiveQuestionId(data.gameId),
+      this.cache.getActiveQuestionData(data.gameId),
     ]);
 
-    const isLate = phase === GamePhase.IDLE || activeQId !== data.questionId;
+    const isLate =
+      phase === GamePhase.IDLE ||
+      activeQuestionData?.questionId !== data.questionId;
 
     if (isLate) {
       this.logger.log(
-        `Late submission for game ${data.gameId}. Question: ${data.questionId}, Phase: ${phase}, ActiveQ: ${activeQId}`,
+        `Late submission for game ${data.gameId}. Question: ${data.questionId}, Phase: ${phase}, ActiveQ: ${activeQuestionData?.questionId}`,
       );
     }
 
@@ -350,7 +364,8 @@ export class GameEngineService {
     const currentPhase = await this.getPhase(gameId);
 
     if (currentPhase === GamePhase.THINKING) {
-      const questionId = await this.cache.getActiveQuestionId(gameId);
+      const questionId = (await this.cache.getActiveQuestionData(gameId))
+        ?.questionId;
       const questionSettings = await this.gameRepository.getQuestionSettings(
         questionId!,
       );
@@ -375,10 +390,10 @@ export class GameEngineService {
     const onTick = this.cache.getTickCallback(gameId);
     const seconds = (await this.cache.getRemainingSeconds(gameId)) ?? 0;
     const phase = await this.getPhase(gameId);
-    const qId = (await this.cache.getActiveQuestionId(gameId)) ?? null;
+    const qData = (await this.cache.getActiveQuestionData(gameId)) ?? null;
 
     if (onTick) {
-      onTick(gameId, seconds, phase, qId);
+      onTick(gameId, seconds, phase, qData);
     }
   }
 

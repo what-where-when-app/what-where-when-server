@@ -92,11 +92,12 @@ export class GameEngineGateway implements OnGatewayDisconnect {
 
     await this.gameService.startNextQuestion(
       data.gameId,
-      (gId, seconds, phase, qId) => {
+      (gId, seconds, phase, qData) => {
         this.server.to(this.getRoom(gId)).emit(GameBroadcastEvent.TimerUpdate, {
           seconds,
           phase,
-          activeQuestionId: qId,
+          activeQuestionId: qData?.questionId,
+          activeQuestionNumber: qData?.questionNumber,
         });
       },
     );
@@ -182,11 +183,12 @@ export class GameEngineGateway implements OnGatewayDisconnect {
     await this.gameService.startQuestionCycle(
       data.gameId,
       data.questionId,
-      (gId, seconds, phase, qId) => {
+      (gId, seconds, phase, qData) => {
         this.server.to(this.getRoom(gId)).emit(GameBroadcastEvent.TimerUpdate, {
           seconds,
           phase,
-          activeQuestionId: qId,
+          activeQuestionId: qData?.questionId,
+          activeQuestionNumber: qData?.questionNumber,
         });
       },
       (phase) => {
