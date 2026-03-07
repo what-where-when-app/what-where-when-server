@@ -168,6 +168,7 @@ export class AnswerMapper {
       answerText: raw.answerText,
       status: raw.status?.name || AnswerStatus.UNSET,
       submittedAt: raw.submittedAt.toISOString(),
+      lateBySeconds: raw.lateBySeconds,
     };
   }
 }

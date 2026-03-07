@@ -67,7 +67,7 @@ export class GameRepository {
         timeToThink: true,
         timeToAnswer: true,
         round: { select: { gameId: true } },
-        questionNumber: true
+        questionNumber: true,
       },
     });
 
@@ -77,7 +77,7 @@ export class GameRepository {
       timeToThink: question.timeToThink,
       timeToAnswer: question.timeToAnswer,
       gameId: question.round.gameId,
-      questionNumber: question.questionNumber
+      questionNumber: question.questionNumber,
     };
   }
 
@@ -175,14 +175,17 @@ export class GameRepository {
     participantId: number,
     questionId: number,
     text: string,
+    submittedAt: Date,
+    lateBySeconds?: number,
   ): Promise<AnswerDomain> {
     const statusId = await this.getStatusIdOrThrow(AnswerStatus.UNSET);
     const answerToSave = {
       gameParticipantId: participantId,
       questionId: questionId,
       answerText: text,
-      submittedAt: new Date(),
+      submittedAt: submittedAt,
       statusId: statusId,
+      lateBySeconds: lateBySeconds,
     };
     const res = await this.prisma.answer.upsert({
       where: {
@@ -193,8 +196,9 @@ export class GameRepository {
       },
       update: {
         answerText: text,
-        submittedAt: new Date(),
+        submittedAt: submittedAt,
         statusId: statusId,
+        lateBySeconds: lateBySeconds,
       },
       create: answerToSave,
       include: {
@@ -296,12 +300,32 @@ export class GameRepository {
       },
       select: {
         id: true,
-        questionNumber: true
+        questionNumber: true,
+        questionDeadline: true,
       },
     });
-    return question ? {
-      questionId: question?.id,
-      questionNumber: question?.questionNumber
-    } : null;
+    return question
+      ? {
+          questionId: question?.id,
+          questionNumber: question?.questionNumber,
+          questionDeadline: question.questionDeadline?.getTime(),
+        }
+      : null;
+  }
+
+  async updateQuestionDeadline(questionId: number, deadline: Date) {
+    return this.prisma.question.update({
+      where: { id: questionId },
+      data: { questionDeadline: deadline },
+    });
+  }
+
+  async getQuestionDeadline(questionId: number) {
+    const question = await this.prisma.question.findFirst({
+      where: {
+        id: questionId,
+      },
+    });
+    return question?.questionDeadline?.getTime();
   }
 }

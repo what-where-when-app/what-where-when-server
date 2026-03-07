@@ -32,8 +32,8 @@ export class GameEngineService {
 
     this.stopTimer(gameId);
 
+    await this.cache.clearPausedSeconds(gameId);
     await this.cache.setPhase(gameId, GamePhase.IDLE);
-    await this.cache.setRemainingSeconds(gameId, 0);
 
     await this.notifyTick(gameId);
 
@@ -217,7 +217,7 @@ export class GameEngineService {
       await Promise.all([
         this.cache.getStatus(gameId),
         this.getPhase(gameId),
-        this.cache.getRemainingSeconds(gameId),
+        this.calculateRemainingSeconds(gameId),
         this.cache.getActiveQuestionData(gameId),
         this.isPaused(gameId),
       ]);
@@ -270,7 +270,8 @@ export class GameEngineService {
       this.cache.setCallbacks(gameId, onTick, onPhaseChange);
 
       await this.cache.setPhase(gameId, GamePhase.PREPARATION);
-      await this.cache.setRemainingSeconds(gameId, 0);
+      await this.cache.clearPausedSeconds(gameId);
+      await this.cache.clearPhaseEnd(gameId);
 
       await this.notifyTick(gameId);
       this.logger.log(`Question ${questionId} prepared for game ${gameId}`);
@@ -293,10 +294,23 @@ export class GameEngineService {
       qData.questionId,
     );
 
-    await this.transitionToPhase(
+    if (!settings) {
+      this.logger.error(
+        `Settings for game ${gameId} and question ${qData.questionId} is null`,
+      );
+      return;
+    }
+
+    const totalSeconds = settings?.timeToThink + settings?.timeToAnswer;
+    const questionDeadline = Date.now() + totalSeconds * 1000;
+
+    await this.cache.setPhaseEnd(gameId, questionDeadline);
+    await this.updateQuestionEnd(qData.questionId, questionDeadline);
+
+      await this.transitionToPhase(
       gameId,
       GamePhase.THINKING,
-      settings!.timeToThink,
+      settings.timeToThink,
     );
   }
 
@@ -304,45 +318,70 @@ export class GameEngineService {
     const status = await this.cache.getStatus(data.gameId);
 
     if (status !== GameStatus.LIVE) {
-      this.logger.warn(`Answer rejected: game ${data.gameId} is ${status}`);
+      this.logger.warn(`Answer must rejected: game ${data.gameId} is ${status}`);
+    }
+
+    try {
+      const submittedTimestamp = new Date(data.submittedAt).getTime();
+      const safeSubmittedAt = Number.isNaN(submittedTimestamp)
+        ? Date.now()
+        : submittedTimestamp;
+
+      const deadline = await this.cache.getQuestionDeadline(data.questionId);
+      let lateBySeconds: number | undefined = undefined;
+
+      if (deadline && safeSubmittedAt > deadline) {
+        lateBySeconds = Math.ceil((safeSubmittedAt - deadline) / 1000);
+      }
+
+      return await this.gameRepository.saveAnswer(
+        data.participantId,
+        data.questionId,
+        data.answer,
+        new Date(safeSubmittedAt),
+        lateBySeconds,
+      );
+    } catch (error) {
+      this.logger.error(`An error occurred: ${error}`);
       return null;
     }
-
-    // TODO: review logic
-    const [phase, activeQuestionData] = await Promise.all([
-      this.getPhase(data.gameId),
-      this.cache.getActiveQuestionData(data.gameId),
-    ]);
-
-    const isLate =
-      phase === GamePhase.IDLE ||
-      activeQuestionData?.questionId !== data.questionId;
-
-    if (isLate) {
-      this.logger.log(
-        `Late submission for game ${data.gameId}. Question: ${data.questionId}, Phase: ${phase}, ActiveQ: ${activeQuestionData?.questionId}`,
-      );
-    }
-
-    const savedAnswer = await this.gameRepository.saveAnswer(
-      data.participantId,
-      data.questionId,
-      data.answer,
-    );
-    return {
-      ...savedAnswer,
-      isLate,
-    };
   }
 
   async pauseTimer(gameId: GameId) {
+    const secondsLeft = await this.calculateRemainingSeconds(gameId);
     this.stopTimer(gameId);
+
+    await this.cache.setPausedSeconds(gameId, secondsLeft);
+    await this.cache.clearPhaseEnd(gameId);
+
     await this.notifyTick(gameId);
   }
 
   async resumeTimer(gameId: GameId) {
     if (await this.isPaused(gameId)) {
-      await this.startInterval(gameId);
+      const pausedSeconds = await this.calculateRemainingSeconds(gameId);
+      const qData = await this.cache.getActiveQuestionData(gameId);
+
+      if (pausedSeconds > 0 && qData) {
+        const newDeadline = Date.now() + pausedSeconds * 1000;
+
+        await this.cache.setPhaseEnd(gameId, newDeadline);
+        await this.cache.clearPausedSeconds(gameId);
+
+        let finalQuestionDeadline = newDeadline;
+        const phase = await this.getPhase(gameId);
+
+        if (phase === GamePhase.THINKING) {
+          const settings = await this.gameRepository.getQuestionSettings(
+            qData.questionId,
+          );
+          finalQuestionDeadline += (settings?.timeToAnswer ?? 10) * 1000;
+        }
+
+        await this.updateQuestionEnd(qData.questionId, finalQuestionDeadline);
+
+        await this.startInterval(gameId);
+      }
     }
   }
 
@@ -354,20 +393,29 @@ export class GameEngineService {
   }
 
   async adjustTime(gameId: GameId, delta: number) {
-    if ((await this.getPhase(gameId)) === GamePhase.IDLE) return;
+    const phase = await this.getPhase(gameId);
+    if (phase === GamePhase.IDLE || phase === GamePhase.PREPARATION) return;
 
-    const current = (await this.cache.getRemainingSeconds(gameId)) ?? 0;
+    const currentPhaseDeadline = await this.cache.getPhaseEnd(gameId);
+    const qData = await this.cache.getActiveQuestionData(gameId);
+    if (currentPhaseDeadline && qData) {
+      const deltaMs = delta * 1000;
+      const newPhaseDeadline = currentPhaseDeadline + deltaMs;
+      await this.cache.setPhaseEnd(gameId, newPhaseDeadline);
 
-    let newVal = current + delta;
+      const currentQuestionDeadline = await this.cache.getQuestionDeadline(
+        qData.questionId,
+      );
+      if (currentQuestionDeadline) {
+        const newQuestionDeadline = currentQuestionDeadline + deltaMs;
+        await this.updateQuestionEnd(qData.questionId, newQuestionDeadline);
+      }
 
-    if (newVal <= 0) {
-      newVal = 0;
-      await this.cache.setRemainingSeconds(gameId, newVal);
       await this.notifyTick(gameId);
-      await this.handlePhaseCompletion(gameId);
-    } else {
-      await this.cache.setRemainingSeconds(gameId, newVal);
-      await this.notifyTick(gameId);
+
+      if (newPhaseDeadline <= Date.now()) {
+        await this.handlePhaseCompletion(gameId);
+      }
     }
   }
 
@@ -375,9 +423,12 @@ export class GameEngineService {
     gameId: GameId,
     phase: GamePhase,
     seconds: number,
+    deadlineOverride?: number
   ) {
+    const deadline = deadlineOverride ?? Date.now() + seconds * 1000;
+
     await this.cache.setPhase(gameId, phase);
-    await this.cache.setRemainingSeconds(gameId, seconds);
+    await this.cache.setPhaseEnd(gameId, deadline);
 
     await this.notifyTick(gameId);
     await this.startInterval(gameId);
@@ -387,15 +438,11 @@ export class GameEngineService {
     if (this.cache.getTimer(gameId) !== undefined) return;
 
     const interval = setInterval(async () => {
-      let current = (await this.cache.getRemainingSeconds(gameId)) || 0;
+      const seconds = await this.calculateRemainingSeconds(gameId);
 
-      if (current > 0) {
-        current--;
-        await this.cache.setRemainingSeconds(gameId, current);
+      if (seconds > 0) {
         await this.notifyTick(gameId);
-      }
-
-      if (current <= 0) {
+      } else {
         await this.handlePhaseCompletion(gameId);
       }
     }, 1000);
@@ -414,25 +461,20 @@ export class GameEngineService {
         questionId!,
       );
 
+      const finalDeadline = questionId ? await this.cache.getQuestionDeadline(questionId) : undefined;
+
       await this.transitionToPhase(
         gameId,
         GamePhase.ANSWERING,
         questionSettings?.timeToAnswer ?? 10,
+        finalDeadline
       );
-    } else if (currentPhase === GamePhase.ANSWERING) {
-      await this.cache.setPhase(gameId, GamePhase.IDLE);
-      await this.cache.setRemainingSeconds(gameId, 0);
-
-      const onPhaseChange = this.cache.getPhaseChangeCallback(gameId);
-      if (onPhaseChange) onPhaseChange(GamePhase.IDLE);
-
-      this.cleanupTimer(gameId);
     }
   }
 
   private async notifyTick(gameId: GameId) {
     const onTick = this.cache.getTickCallback(gameId);
-    const seconds = (await this.cache.getRemainingSeconds(gameId)) ?? 0;
+    const seconds = await this.calculateRemainingSeconds(gameId);
     const phase = await this.getPhase(gameId);
     const qData = (await this.cache.getActiveQuestionData(gameId)) ?? null;
 
@@ -452,5 +494,24 @@ export class GameEngineService {
   private cleanupTimer(gameId: GameId) {
     this.stopTimer(gameId);
     this.cache.removeCallbacks(gameId);
+  }
+
+  private async calculateRemainingSeconds(gameId: GameId): Promise<number> {
+    const paused = await this.cache.getPausedSeconds(gameId);
+    if (paused !== undefined) return paused;
+
+    const deadline = await this.cache.getPhaseEnd(gameId);
+    if (!deadline) return 0;
+
+    const diff = Math.ceil((deadline - Date.now()) / 1000);
+    return Math.max(0, diff);
+  }
+
+  private async updateQuestionEnd(questionId: number, questionDeadline: number) {
+    await this.cache.setQuestionDeadline(questionId, questionDeadline);
+    await this.gameRepository.updateQuestionDeadline(
+      questionId,
+      new Date(questionDeadline),
+    );
   }
 }

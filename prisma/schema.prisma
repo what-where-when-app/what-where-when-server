@@ -119,16 +119,17 @@ model Round {
 }
 
 model Question {
-  id             Int      @id @default(autoincrement())
-  roundId        Int      @map("round_id")
-  text           String
-  answer         String
-  questionNumber Int      @map("question_number")
-  timeToThink    Int      @map("time_to_think")
-  timeToAnswer   Int      @map("time_to_answer")
-  isActive       Boolean  @default(false) @map("is_active")
-  answers        Answer[]
-  round          Round    @relation(fields: [roundId], references: [id])
+  id               Int       @id @default(autoincrement())
+  roundId          Int       @map("round_id")
+  text             String
+  answer           String
+  questionNumber   Int       @map("question_number")
+  timeToThink      Int       @map("time_to_think")
+  timeToAnswer     Int       @map("time_to_answer")
+  isActive         Boolean   @default(false) @map("is_active")
+  answers          Answer[]
+  round            Round     @relation(fields: [roundId], references: [id])
+  questionDeadline DateTime? @map("question_deadline")
 
   @@unique([roundId, questionNumber])
   @@map("questions")
@@ -156,6 +157,7 @@ model Answer {
   question          Question              @relation(fields: [questionId], references: [id])
   status            AnswerStatus          @relation(fields: [statusId], references: [id])
   disputes          Dispute[]
+  lateBySeconds     Int?                  @map("late_by_seconds")
 
   @@unique([gameParticipantId, questionId])
   @@map("answers")

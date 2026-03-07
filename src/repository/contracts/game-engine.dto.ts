@@ -39,6 +39,7 @@ export interface SubmitAnswerDto {
   participantId: number;
   answer: string;
   questionId: number;
+  submittedAt: string;
 }
 
 export interface GetAnswersDto {
@@ -75,6 +76,7 @@ export interface GameState {
 export interface QuestionData {
   questionId: number;
   questionNumber: number;
+  questionDeadline?: number;
 }
 
 export interface ParticipantDomain {
@@ -94,7 +96,7 @@ export interface AnswerDomain {
   answerText: string;
   status: string;
   submittedAt: string;
-  isLate?: boolean;
+  lateBySeconds?: number;
 }
 
 export interface QuestionSettings {

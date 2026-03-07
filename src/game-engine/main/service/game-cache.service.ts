@@ -11,8 +11,10 @@ import { GameRepository } from '../../../repository/game.repository';
 export class GameCacheService {
   private readonly phases: Map<GameId, GamePhase> = new Map();
   private readonly statuses: Map<GameId, GameStatus> = new Map();
-  private readonly remainingSeconds: Map<GameId, number> = new Map();
   private readonly activeQuestionIds: Map<GameId, QuestionData> = new Map();
+  private readonly phaseDeadlines = new Map<GameId, number>();
+  private readonly pausedSeconds = new Map<GameId, number>();
+  private readonly questionDeadlines = new Map<number, number>();
 
   private readonly activeTimers: Map<GameId, NodeJS.Timeout> = new Map();
   private readonly tickCallbacks: Map<
@@ -30,6 +32,50 @@ export class GameCacheService {
   > = new Map();
 
   constructor(private readonly gameRepository: GameRepository) {}
+
+  public async setQuestionDeadline(
+    questionId: number,
+    timestamp: number,
+  ): Promise<void> {
+    this.questionDeadlines.set(questionId, timestamp);
+  }
+
+  public async getQuestionDeadline(
+    questionId: number,
+  ): Promise<number | undefined> {
+    let questionDeadline = this.questionDeadlines.get(questionId);
+    if (!questionDeadline) {
+      questionDeadline = await this.gameRepository.getQuestionDeadline(questionId);
+    }
+    return questionDeadline;
+  }
+
+  public async getPhaseEnd(gameId: GameId): Promise<number | undefined> {
+    return this.phaseDeadlines.get(gameId);
+  }
+
+  public async setPhaseEnd(gameId: GameId, timestamp: number): Promise<void> {
+    this.phaseDeadlines.set(gameId, timestamp);
+  }
+
+  public async clearPhaseEnd(gameId: GameId): Promise<void> {
+    this.phaseDeadlines.delete(gameId);
+  }
+
+  public async getPausedSeconds(gameId: GameId): Promise<number | undefined> {
+    return this.pausedSeconds.get(gameId);
+  }
+
+  public async setPausedSeconds(
+    gameId: GameId,
+    seconds: number,
+  ): Promise<void> {
+    this.pausedSeconds.set(gameId, seconds);
+  }
+
+  public async clearPausedSeconds(gameId: GameId): Promise<void> {
+    this.pausedSeconds.delete(gameId);
+  }
 
   public async getPhase(gameId: GameId): Promise<GamePhase> {
     return this.phases.get(gameId) || GamePhase.IDLE;
@@ -54,17 +100,6 @@ export class GameCacheService {
 
   public async setStatus(gameId: GameId, status: GameStatus): Promise<void> {
     this.statuses.set(gameId, status);
-  }
-
-  public async getRemainingSeconds(gameId: GameId): Promise<number> {
-    return this.remainingSeconds.get(gameId) ?? 0;
-  }
-
-  public async setRemainingSeconds(
-    gameId: GameId,
-    seconds: number,
-  ): Promise<void> {
-    this.remainingSeconds.set(gameId, seconds);
   }
 
   public async getActiveQuestionData(
