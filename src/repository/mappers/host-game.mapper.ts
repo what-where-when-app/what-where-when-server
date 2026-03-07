@@ -119,6 +119,7 @@ export function mapHostGameDetails(game: GameDetailsLike): HostGameDetails {
       manager_id: t.managerId,
       name: t.name,
       team_code: t.teamCode,
+      category_id: t.categoryId,
       created_at: t.createdAt.toISOString(),
     })),
 

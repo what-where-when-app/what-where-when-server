@@ -62,6 +62,7 @@ model Category {
   user         User                   @relation(fields: [userId], references: [id])
   gameLinks    CategoryGameRelation[]
   participants GameParticipant[]
+  teams        Team[]
 
   @@map("categories")
 }
@@ -84,6 +85,8 @@ model Team {
   createdAt    DateTime          @default(now()) @map("created_at")
   managerId    Int               @map("manager_id")
   participants GameParticipant[]
+  categoryId   Int?              @map("category_id")
+  category     Category?         @relation(fields: [categoryId], references: [id])
   users        User              @relation(fields: [managerId], references: [id])
 
   @@map("teams")
