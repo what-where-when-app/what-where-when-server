@@ -36,6 +36,7 @@ export interface GameTeam {
   name: string;
   team_code: string;
   manager_id: number;
+  category_id: number | null;
   created_at?: ISODateTime;
 }
 
