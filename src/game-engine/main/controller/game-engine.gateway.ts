@@ -19,6 +19,7 @@ import type {
   StartQuestionDto,
   SubmitAnswerDto,
 } from '../../../repository/contracts/game-engine.dto';
+import { GameId } from '../../../repository/contracts/common.dto';
 
 /**
  * Events sent from the Host/Admin to the Server
@@ -95,10 +96,10 @@ export class GameEngineGateway implements OnGatewayDisconnect {
   @SubscribeMessage(PlayerRequestEvent.SyncLeaderboard)
   async handleSyncLeaderboard(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { participantId: number },
+    @MessageBody() data: { gameId: GameId },
   ) {
-    const history = await this.gameService.getTeamHistory(data.participantId);
-    client.emit(PlayerResponseEvent.HistoryUpdate, history);
+    const leaderboard = await this.gameService.getLeaderboard(data.gameId);
+    client.emit(GameBroadcastEvent.LeaderboardUpdate, leaderboard);
   }
 
   @UseGuards(WsJwtGuard)

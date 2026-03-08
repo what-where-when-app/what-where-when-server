@@ -21,6 +21,10 @@ export class GameEngineService {
     private readonly cache: GameCacheService,
   ) {}
 
+  public async getLeaderboard(gameId: GameId) {
+    return this.gameRepository.getLeaderboard(gameId);
+  }
+
   public async stopQuestion(gameId: GameId) {
     const status = await this.cache.getStatus(gameId);
     if (status !== GameStatus.LIVE) {
@@ -81,7 +85,7 @@ export class GameEngineService {
 
     const [updatedAnswer, leaderboard] = await Promise.all([
       this.gameRepository.getAnswerById(answerId),
-      this.gameRepository.getLeaderboard(gameId),
+      this.getLeaderboard(gameId),
     ]);
 
     return { updatedAnswer, leaderboard };
@@ -101,7 +105,7 @@ export class GameEngineService {
 
     const [updatedAnswer, leaderboard, history] = await Promise.all([
       this.gameRepository.getAnswerById(answerId),
-      this.gameRepository.getLeaderboard(gameId),
+      this.getLeaderboard(gameId),
       this.gameRepository.getParticipantAnswerHistory(updatedData.gameParticipantId)
     ]);
 

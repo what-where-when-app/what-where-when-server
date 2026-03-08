@@ -90,7 +90,6 @@ export class GameRepository {
       },
       orderBy: { submittedAt: 'asc' },
     });
-    console.log(answers);
     return answers.map(AnswerMapper.toDomain);
   }
 
@@ -346,7 +345,6 @@ export class GameRepository {
         question: {
           select: {
             text: true,
-            questionNumber: true,
             answer: true,
           },
         },
