@@ -287,13 +287,19 @@ export class GameRepository {
 
     const participants = await this.prisma.gameParticipant.findMany({
       where: { gameId },
-      include: { team: true },
+      include: {
+        team: {
+          include: { category: true }
+        }
+      },
     });
 
     return participants
       .map((p) => ({
         participantId: p.id,
         teamName: p.team.name,
+        categoryId: p.categoryId,
+        categoryName: p.team.category?.name || null,
         score: scores.find((s) => s.gameParticipantId === p.id)?._count.id || 0,
       }))
       .sort((a, b) => b.score - a.score);

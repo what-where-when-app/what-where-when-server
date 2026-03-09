@@ -278,7 +278,7 @@ export class HostGameRepository {
         });
       }
 
-      if (req.game.teams.length > 0 && categoryIds.length > 0) {
+      if (req.game.teams.length > 0 && categoryIds.length === 0) {
         throw new BadRequestException({
           code: 'VALIDATION_ERROR',
           message:

@@ -106,3 +106,11 @@ export interface QuestionSettings {
   questionNumber: number;
   gameId: number;
 }
+
+export interface LeaderboardEntry {
+  participantId: number;
+  teamName: string;
+  categoryId: number;
+  categoryName?: string | null;
+  score: number;
+}

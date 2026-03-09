@@ -5,6 +5,7 @@ import {
   GamePhase,
   GameState,
   GameStatus,
+  LeaderboardEntry,
   ParticipantDomain,
   QuestionData,
   SubmitAnswerDto,
@@ -208,16 +209,19 @@ export class GameEngineService {
     state: GameState;
     answers: AnswerDomain[];
     participants: ParticipantDomain[];
+    leaderboard: LeaderboardEntry[]
   }> {
-    const [answers, state, participants] = await Promise.all([
+    const [answers, state, participants, leaderboard] = await Promise.all([
       this.gameRepository.getAnswersByGame(gameId),
       this.getGameState(gameId),
       this.gameRepository.getParticipantsByGame(gameId),
+      this.gameRepository.getLeaderboard(gameId),
     ]);
     return {
       state,
       answers,
       participants,
+      leaderboard
     };
   }
 
