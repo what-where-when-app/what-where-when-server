@@ -119,6 +119,7 @@ export function mapHostGameDetails(game: GameDetailsLike): HostGameDetails {
       manager_id: t.managerId,
       name: t.name,
       team_code: t.teamCode,
+      category_id: t.categoryId,
       created_at: t.createdAt.toISOString(),
     })),
 
@@ -163,11 +164,13 @@ export class AnswerMapper {
     return {
       id: raw.id,
       questionId: raw.questionId,
+      questionNumber: raw.questionNumber,
       participantId: raw.gameParticipantId,
       teamName: raw.participant?.team?.name || 'Unknown Team',
       answerText: raw.answerText,
       status: raw.status?.name || AnswerStatus.UNSET,
       submittedAt: raw.submittedAt.toISOString(),
+      lateBySeconds: raw.lateBySeconds,
     };
   }
 }

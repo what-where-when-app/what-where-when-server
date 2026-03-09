@@ -67,7 +67,7 @@ export class GameRepository {
         timeToThink: true,
         timeToAnswer: true,
         round: { select: { gameId: true } },
-        questionNumber: true
+        questionNumber: true,
       },
     });
 
@@ -77,7 +77,7 @@ export class GameRepository {
       timeToThink: question.timeToThink,
       timeToAnswer: question.timeToAnswer,
       gameId: question.round.gameId,
-      questionNumber: question.questionNumber
+      questionNumber: question.questionNumber,
     };
   }
 
@@ -90,7 +90,6 @@ export class GameRepository {
       },
       orderBy: { submittedAt: 'asc' },
     });
-    console.log(answers);
     return answers.map(AnswerMapper.toDomain);
   }
 
@@ -175,14 +174,17 @@ export class GameRepository {
     participantId: number,
     questionId: number,
     text: string,
+    submittedAt: Date,
+    lateBySeconds?: number,
   ): Promise<AnswerDomain> {
     const statusId = await this.getStatusIdOrThrow(AnswerStatus.UNSET);
     const answerToSave = {
       gameParticipantId: participantId,
       questionId: questionId,
       answerText: text,
-      submittedAt: new Date(),
+      submittedAt: submittedAt,
       statusId: statusId,
+      lateBySeconds: lateBySeconds,
     };
     const res = await this.prisma.answer.upsert({
       where: {
@@ -193,8 +195,9 @@ export class GameRepository {
       },
       update: {
         answerText: text,
-        submittedAt: new Date(),
+        submittedAt: submittedAt,
         statusId: statusId,
+        lateBySeconds: lateBySeconds,
       },
       create: answerToSave,
       include: {
@@ -222,10 +225,15 @@ export class GameRepository {
     return this.prisma.$transaction(async (tx) => {
       const current = await tx.answer.findUniqueOrThrow({
         where: { id: answerId },
+        include: { participant: true },
       });
       const updated = await tx.answer.update({
         where: { id: answerId },
         data: { statusId: newStatusId },
+        include: {
+          participant: { include: { team: true } },
+          status: true,
+        },
       });
       await tx.answerStatusHistory.create({
         data: {
@@ -235,7 +243,10 @@ export class GameRepository {
           changedById: adminId,
         },
       });
-      return updated;
+      return {
+        socketId: current.participant.socketId,
+        gameParticipantId: updated.gameParticipantId,
+      }
     });
   }
 
@@ -276,13 +287,19 @@ export class GameRepository {
 
     const participants = await this.prisma.gameParticipant.findMany({
       where: { gameId },
-      include: { team: true },
+      include: {
+        team: {
+          include: { category: true }
+        }
+      },
     });
 
     return participants
       .map((p) => ({
         participantId: p.id,
         teamName: p.team.name,
+        categoryId: p.categoryId,
+        categoryName: p.team.category?.name || null,
         score: scores.find((s) => s.gameParticipantId === p.id)?._count.id || 0,
       }))
       .sort((a, b) => b.score - a.score);
@@ -296,12 +313,53 @@ export class GameRepository {
       },
       select: {
         id: true,
-        questionNumber: true
+        questionNumber: true,
+        questionDeadline: true,
       },
     });
-    return question ? {
-      questionId: question?.id,
-      questionNumber: question?.questionNumber
-    } : null;
+    return question
+      ? {
+          questionId: question?.id,
+          questionNumber: question?.questionNumber,
+          questionDeadline: question.questionDeadline?.getTime(),
+        }
+      : null;
+  }
+
+  async updateQuestionDeadline(questionId: number, deadline: Date) {
+    return this.prisma.question.update({
+      where: { id: questionId },
+      data: { questionDeadline: deadline },
+    });
+  }
+
+  async getQuestionDeadline(questionId: number) {
+    const question = await this.prisma.question.findFirst({
+      where: {
+        id: questionId,
+      },
+    });
+    return question?.questionDeadline?.getTime();
+  }
+
+  async getParticipantAnswerHistory(
+    participantId: number,
+  ): Promise<AnswerDomain[]> {
+    const answers = await this.prisma.answer.findMany({
+      where: { gameParticipantId: participantId },
+      include: {
+        question: {
+          select: {
+            text: true,
+            answer: true,
+            questionNumber: true
+          },
+        },
+        status: true,
+      },
+      orderBy: { question: { questionNumber: 'asc' } },
+    });
+
+    return answers.map(a => AnswerMapper.toDomain(a));
   }
 }

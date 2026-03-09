@@ -278,9 +278,7 @@ export class HostGameRepository {
         });
       }
 
-      const defaultCategoryId = categoryIds[0];
-
-      if (req.game.teams.length > 0 && !defaultCategoryId) {
+      if (req.game.teams.length > 0 && categoryIds.length === 0) {
         throw new BadRequestException({
           code: 'VALIDATION_ERROR',
           message:
@@ -300,7 +298,7 @@ export class HostGameRepository {
           }
           const updated = await tx.team.update({
             where: { id: t.id },
-            data: { name: t.name, teamCode: t.team_code },
+            data: { name: t.name, teamCode: t.team_code, categoryId: t.category_id },
           });
           teamId = updated.id;
         } else {
@@ -310,7 +308,7 @@ export class HostGameRepository {
           teamId = created.id;
         }
 
-        if (defaultCategoryId) {
+        if (t.category_id) {
           const already = await tx.gameParticipant.findFirst({
             where: { gameId: existing.id, teamId },
           });
@@ -319,7 +317,7 @@ export class HostGameRepository {
               data: {
                 gameId: existing.id,
                 teamId,
-                categoryId: defaultCategoryId,
+                categoryId: t.category_id,
                 isAvailable: true,
               },
             });

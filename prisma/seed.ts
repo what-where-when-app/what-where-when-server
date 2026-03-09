@@ -70,30 +70,36 @@ async function seedTestData() {
     },
   });
 
-  const category = await prisma.category.create({
-    data: { name: 'General Knowledge', userId: host.id },
+  const category1 = await prisma.category.create({
+    data: { name: 'Category A', userId: host.id },
+  });
+
+  const category2 = await prisma.category.create({
+    data: { name: 'Category B', userId: host.id },
   });
 
   const game = await prisma.game.create({
     data: {
       hostId: host.id,
       name: 'Championship Test Game',
-      passcode: 111222,
-      status: 'PREPARING',
+      passcode: 1122,
+      status: 'DRAFT',
       date: new Date(),
     },
   });
 
-  const teamNames = ['Alpha Team', 'Beta Team', 'Gamma Team'];
+  const teamNames1 = ['Alpha Team', 'Beta Team', 'Gamma Team'];
+  const teamNames2 = ['Delta Team', 'Epsilon Team', 'Zeta Team'];
   const participants: GameParticipant[] = [];
   const questions: Question[] = [];
 
-  for (const name of teamNames) {
+  for (const name of teamNames1) {
     const team = await prisma.team.create({
       data: {
         name,
         teamCode: `${name.split(' ')[0].toUpperCase()}_CODE`,
         managerId: host.id,
+        categoryId: category1.id,
       },
     });
 
@@ -101,7 +107,27 @@ async function seedTestData() {
       data: {
         gameId: game.id,
         teamId: team.id,
-        categoryId: category.id,
+        categoryId: category1.id,
+      },
+    });
+    participants.push(participant);
+  }
+
+  for (const name of teamNames2) {
+    const team = await prisma.team.create({
+      data: {
+        name,
+        teamCode: `${name.split(' ')[0].toUpperCase()}_CODE`,
+        managerId: host.id,
+        categoryId: category2.id,
+      },
+    });
+
+    const participant = await prisma.gameParticipant.create({
+      data: {
+        gameId: game.id,
+        teamId: team.id,
+        categoryId: category2.id,
       },
     });
     participants.push(participant);
@@ -135,22 +161,12 @@ async function seedTestData() {
     questions.push(q);
   }
 
-  console.log(`
-  ======= TEST DATA READY =======
-  Host Login: admin@test.com / password123
-  Game ID:    ${game.id}
-  
-  PARTICIPANTS (Use these for player.html):
-  - ${teamNames[0]}: ID ${participants[0].id}
-  - ${teamNames[1]}: ID ${participants[1].id}
-  - ${teamNames[2]}: ID ${participants[2].id}
-
-  QUESTIONS (Use these for admin.html):
-  - Q1 ID: ${questions[0].id} ("${questions[0].text}")
-  - Q2 ID: ${questions[1].id} ("${questions[1].text}")
-  - Q3 ID: ${questions[2].id} ("${questions[2].text}")
-  ===============================
-  `);
+  await prisma.categoryGameRelation.createMany({
+    data: [
+      { gameId: game.id, categoryId: category1.id },
+      { gameId: game.id, categoryId: category2.id },
+    ],
+  });
 }
 
 async function main() {

@@ -19,6 +19,7 @@ import type {
   StartQuestionDto,
   SubmitAnswerDto,
 } from '../../../repository/contracts/game-engine.dto';
+import { GameId } from '../../../repository/contracts/common.dto';
 
 /**
  * Events sent from the Host/Admin to the Server
@@ -26,6 +27,7 @@ import type {
 export enum AdminRequestEvent {
   Sync = 'admin:sync', // Initial synchronization: joins admin room and fetches all game data
   StartGame = 'admin:start_game', // Transitions game status from DRAFT to LIVE
+  PrepareQuestion = 'admin:prepare_question', // Triggers preparation state of the question
   StartQuestion = 'admin:start_question', // Triggers the start of a specific question cycle
   JudgeAnswer = 'admin:judge_answer', // Submits host's verdict (correct/wrong) for a team's answer
   AdjustTime = 'admin:adjust_time', // Adds or subtracts seconds from the current active timer
@@ -51,13 +53,16 @@ export enum PlayerRequestEvent {
   JoinGame = 'join_game', // Initial request to join the public game room
   SubmitAnswer = 'player:submit_answer', // Sends the team's answer text to the server
   Dispute = 'player:dispute', // Team challenges a host's verdict
+  SyncHistory = 'sync_history',
+  SyncLeaderboard = 'sync_leaderboard',
 }
 
 /**
  * Events sent from the Server specifically to a Player
  */
 export enum PlayerResponseEvent {
-  AnswerReceived = 'answer_received',   // Confirmation that the team's answer was successfully saved
+  AnswerReceived = 'answer_received', // Confirmation that the team's answer was successfully saved
+  HistoryUpdate = 'history_update',
 }
 
 /**
@@ -77,9 +82,25 @@ export class GameEngineGateway implements OnGatewayDisconnect {
   @WebSocketServer() server: Server;
   private readonly logger = new Logger(GameEngineGateway.name);
 
-  constructor(
-    private readonly gameService: GameEngineService,
-  ) {}
+  constructor(private readonly gameService: GameEngineService) {}
+
+  @SubscribeMessage(PlayerRequestEvent.SyncHistory)
+  async handleSyncHistory(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { participantId: number },
+  ) {
+    const history = await this.gameService.getTeamHistory(data.participantId);
+    client.emit(PlayerResponseEvent.HistoryUpdate, history);
+  }
+
+  @SubscribeMessage(PlayerRequestEvent.SyncLeaderboard)
+  async handleSyncLeaderboard(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { gameId: GameId },
+  ) {
+    const leaderboard = await this.gameService.getLeaderboard(data.gameId);
+    client.emit(GameBroadcastEvent.LeaderboardUpdate, leaderboard);
+  }
 
   @UseGuards(WsJwtGuard)
   @SubscribeMessage(AdminRequestEvent.StopQuestion)
@@ -145,7 +166,7 @@ export class GameEngineGateway implements OnGatewayDisconnect {
   }
 
   async handleDisconnect(client: Socket) {
-    await this.gameService.disconnectParticipant(client.id)
+    await this.gameService.disconnectParticipant(client.id);
   }
 
   @SubscribeMessage(PlayerRequestEvent.JoinGame)
@@ -181,14 +202,14 @@ export class GameEngineGateway implements OnGatewayDisconnect {
   }
 
   @UseGuards(WsJwtGuard)
-  @SubscribeMessage(AdminRequestEvent.StartQuestion)
-  async handleStart(
+  @SubscribeMessage(AdminRequestEvent.PrepareQuestion)
+  async handlePrepare(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: StartQuestionDto,
   ) {
     await this.ensureAdmin(data.gameId, client);
 
-    await this.gameService.startQuestionCycle(
+    await this.gameService.prepareQuestion(
       data.gameId,
       data.questionId,
       (gId, seconds, phase, qData) => {
@@ -203,6 +224,17 @@ export class GameEngineGateway implements OnGatewayDisconnect {
         this.logger.log(`Game ${data.gameId} phase changed to ${phase}`);
       },
     );
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage(AdminRequestEvent.StartQuestion)
+  async handleStart(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: StartQuestionDto,
+  ) {
+    await this.ensureAdmin(data.gameId, client);
+
+    await this.gameService.startQuestionCycle(data.gameId);
   }
 
   @SubscribeMessage(PlayerRequestEvent.SubmitAnswer)
@@ -228,12 +260,13 @@ export class GameEngineGateway implements OnGatewayDisconnect {
   ) {
     await this.ensureAdmin(data.gameId, client);
 
-    const { updatedAnswer, leaderboard } = await this.gameService.judgeAnswer(
-      data.gameId,
-      data.answerId,
-      data.verdict,
-      client['user'].sub,
-    );
+    const { updatedAnswer, leaderboard, history, socketId } =
+      await this.gameService.judgeAnswer(
+        data.gameId,
+        data.answerId,
+        data.verdict,
+        client['user'].sub,
+      );
 
     this.server
       .to(this.getAdminRoom(data.gameId))
@@ -242,6 +275,10 @@ export class GameEngineGateway implements OnGatewayDisconnect {
     this.server
       .to(this.getRoom(data.gameId))
       .emit(GameBroadcastEvent.LeaderboardUpdate, leaderboard);
+
+    if (socketId) {
+      this.server.to(socketId).emit(PlayerResponseEvent.HistoryUpdate, history);
+    }
   }
 
   @SubscribeMessage(PlayerRequestEvent.Dispute)
