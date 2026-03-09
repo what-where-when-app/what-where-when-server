@@ -91,6 +91,7 @@ export interface ParticipantDomain {
 export interface AnswerDomain {
   id: number;
   questionId: number;
+  questionNumber?: number;
   participantId: number;
   teamName: string;
   answerText: string;

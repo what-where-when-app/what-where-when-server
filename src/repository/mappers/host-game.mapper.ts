@@ -164,6 +164,7 @@ export class AnswerMapper {
     return {
       id: raw.id,
       questionId: raw.questionId,
+      questionNumber: raw.questionNumber,
       participantId: raw.gameParticipantId,
       teamName: raw.participant?.team?.name || 'Unknown Team',
       answerText: raw.answerText,

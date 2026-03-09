@@ -346,6 +346,7 @@ export class GameRepository {
           select: {
             text: true,
             answer: true,
+            questionNumber: true
           },
         },
         status: true,
