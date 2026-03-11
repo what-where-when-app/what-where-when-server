@@ -52,7 +52,7 @@ export class GameRepository {
   ): Promise<ParticipantDomain[]> {
     const participants = await this.prisma.gameParticipant.findMany({
       where: { gameId },
-      include: { team: true },
+      include: { team: true, category: true },
     });
 
     return participants.map(PlayerMapper.toParticipantDomain);
@@ -118,6 +118,7 @@ export class GameRepository {
       },
       include: {
         team: true,
+        category: true,
       },
     });
 
@@ -246,7 +247,7 @@ export class GameRepository {
       return {
         socketId: current.participant.socketId,
         gameParticipantId: updated.gameParticipantId,
-      }
+      };
     });
   }
 
@@ -274,35 +275,26 @@ export class GameRepository {
     });
   }
 
-  async getLeaderboard(gameId: number) {
+  async getCorrectAnswersByGame(
+    gameId: number,
+  ): Promise<{ participantId: number; questionId: number }[]> {
     const correctStatusId = await this.getStatusIdOrThrow(AnswerStatus.CORRECT);
-    const scores = await this.prisma.answer.groupBy({
-      by: ['gameParticipantId'],
+
+    const answers = await this.prisma.answer.findMany({
       where: {
         statusId: correctStatusId,
         participant: { gameId },
       },
-      _count: { id: true },
-    });
-
-    const participants = await this.prisma.gameParticipant.findMany({
-      where: { gameId },
-      include: {
-        team: {
-          include: { category: true }
-        }
+      select: {
+        gameParticipantId: true,
+        questionId: true,
       },
     });
 
-    return participants
-      .map((p) => ({
-        participantId: p.id,
-        teamName: p.team.name,
-        categoryId: p.categoryId,
-        categoryName: p.team.category?.name || null,
-        score: scores.find((s) => s.gameParticipantId === p.id)?._count.id || 0,
-      }))
-      .sort((a, b) => b.score - a.score);
+    return answers.map((a) => ({
+      participantId: a.gameParticipantId,
+      questionId: a.questionId,
+    }));
   }
 
   async findActiveQuestionData(gameId: number): Promise<QuestionData | null> {
@@ -360,6 +352,6 @@ export class GameRepository {
       orderBy: { question: { questionNumber: 'asc' } },
     });
 
-    return answers.map(a => AnswerMapper.toDomain(a));
+    return answers.map((a) => AnswerMapper.toDomain(a));
   }
 }

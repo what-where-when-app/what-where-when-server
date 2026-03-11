@@ -7,6 +7,7 @@ import {
   ConnectedSocket,
   WsException,
   OnGatewayDisconnect,
+  OnGatewayInit,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { GameEngineService } from '../service/game-engine.service';
@@ -20,6 +21,7 @@ import type {
   SubmitAnswerDto,
 } from '../../../repository/contracts/game-engine.dto';
 import { GameId } from '../../../repository/contracts/common.dto';
+import { debounceTime, Subject } from 'rxjs';
 
 /**
  * Events sent from the Host/Admin to the Server
@@ -78,11 +80,29 @@ export enum GameBroadcastEvent {
 }
 
 @WebSocketGateway({ cors: { origin: '*' }, namespace: 'game' })
-export class GameEngineGateway implements OnGatewayDisconnect {
+export class GameEngineGateway implements OnGatewayDisconnect, OnGatewayInit {
   @WebSocketServer() server: Server;
   private readonly logger = new Logger(GameEngineGateway.name);
+  private readonly leaderboardUpdate$ = new Subject<number>();
 
   constructor(private readonly gameService: GameEngineService) {}
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  afterInit(_server: Server) {
+    this.leaderboardUpdate$
+      .pipe(debounceTime(500))
+      .subscribe(async (gameId) => {
+        const leaderboard = await this.gameService.getLeaderboard(gameId);
+        this.server
+          .to(`game_${gameId}`)
+          .emit('leaderboard_update', leaderboard);
+      });
+    this.logger.log('Leaderboard debouncer initialized');
+  }
+
+  private requestLeaderboardUpdate(gameId: number) {
+    this.leaderboardUpdate$.next(gameId);
+  }
 
   @SubscribeMessage(PlayerRequestEvent.SyncHistory)
   async handleSyncHistory(
@@ -260,7 +280,7 @@ export class GameEngineGateway implements OnGatewayDisconnect {
   ) {
     await this.ensureAdmin(data.gameId, client);
 
-    const { updatedAnswer, leaderboard, history, socketId } =
+    const { updatedAnswer, history, socketId } =
       await this.gameService.judgeAnswer(
         data.gameId,
         data.answerId,
@@ -272,9 +292,7 @@ export class GameEngineGateway implements OnGatewayDisconnect {
       .to(this.getAdminRoom(data.gameId))
       .emit(AdminResponseEvent.AnswerUpdate, updatedAnswer);
 
-    this.server
-      .to(this.getRoom(data.gameId))
-      .emit(GameBroadcastEvent.LeaderboardUpdate, leaderboard);
+    this.requestLeaderboardUpdate(data.gameId);
 
     if (socketId) {
       this.server.to(socketId).emit(PlayerResponseEvent.HistoryUpdate, history);

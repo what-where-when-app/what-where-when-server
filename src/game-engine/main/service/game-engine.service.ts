@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { GameId } from '../../../repository/contracts/common.dto';
 import {
   AnswerDomain,
+  AnswerStatus,
   GamePhase,
   GameState,
   GameStatus,
@@ -22,8 +23,62 @@ export class GameEngineService {
     private readonly cache: GameCacheService,
   ) {}
 
-  public async getLeaderboard(gameId: GameId) {
-    return this.gameRepository.getLeaderboard(gameId);
+  public async getLeaderboard(gameId: GameId): Promise<LeaderboardEntry[]> {
+    const [allParticipants, allAnswers] = await Promise.all([
+      this.gameRepository.getParticipantsByGame(gameId),
+      this.gameRepository.getAnswersByGame(gameId),
+    ]);
+
+    const participantIdsWithAnswers = new Set(
+      allAnswers.map((a) => a.participantId),
+    );
+
+    const activeParticipants = allParticipants.filter(
+      (p) => participantIdsWithAnswers.has(p.id) || p.isConnected,
+    );
+
+    const totalActiveTeamsCount = activeParticipants.length;
+
+    if (totalActiveTeamsCount === 0) return [];
+
+    const correctAnswers = allAnswers.filter((a) => a.status === AnswerStatus.CORRECT);
+
+    const correctCountsByQuestion = new Map<number, number>();
+    correctAnswers.forEach((ans) => {
+      const current = correctCountsByQuestion.get(ans.questionId) || 0;
+      correctCountsByQuestion.set(ans.questionId, current + 1);
+    });
+
+    const questionWeights = new Map<number, number>();
+    correctCountsByQuestion.forEach((correctCount, questionId) => {
+      const weight = totalActiveTeamsCount - correctCount + 1;
+      questionWeights.set(questionId, weight);
+    });
+
+    const leaderboard: LeaderboardEntry[] = activeParticipants.map((p) => {
+      const teamCorrectAnswers = correctAnswers.filter(
+        (a) => a.participantId === p.id,
+      );
+
+      const score = teamCorrectAnswers.length;
+      const rating = teamCorrectAnswers.reduce((sum, ans) => {
+        return sum + (questionWeights.get(ans.questionId) || 0);
+      }, 0);
+
+      return {
+        participantId: p.id,
+        teamName: p.teamName,
+        categoryId: p.categoryId,
+        categoryName: p.categoryName,
+        score: score,
+        rating: rating,
+      };
+    });
+
+    return leaderboard.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return b.rating - a.rating;
+    });
   }
 
   public async stopQuestion(gameId: GameId) {
@@ -104,13 +159,12 @@ export class GameEngineService {
       adminId,
     );
 
-    const [updatedAnswer, leaderboard, history] = await Promise.all([
+    const [updatedAnswer, history] = await Promise.all([
       this.gameRepository.getAnswerById(answerId),
-      this.getLeaderboard(gameId),
       this.gameRepository.getParticipantAnswerHistory(updatedData.gameParticipantId)
     ]);
 
-    return { updatedAnswer, leaderboard, history, socketId: updatedData.socketId};
+    return { updatedAnswer, history, socketId: updatedData.socketId};
   }
 
   async startNextQuestion(
@@ -215,7 +269,7 @@ export class GameEngineService {
       this.gameRepository.getAnswersByGame(gameId),
       this.getGameState(gameId),
       this.gameRepository.getParticipantsByGame(gameId),
-      this.gameRepository.getLeaderboard(gameId),
+      this.getLeaderboard(gameId),
     ]);
     return {
       state,
@@ -346,7 +400,7 @@ export class GameEngineService {
       let lateBySeconds: number | undefined = undefined;
 
       if (deadline && safeSubmittedAt > deadline) {
-        lateBySeconds = Math.ceil((safeSubmittedAt - deadline) / 1000);
+        lateBySeconds = Math.round((safeSubmittedAt - deadline) / 10) / 100;
       }
 
       return await this.gameRepository.saveAnswer(
@@ -486,6 +540,8 @@ export class GameEngineService {
         questionSettings?.timeToAnswer ?? 10,
         finalDeadline,
       );
+    } else if (currentPhase === GamePhase.ANSWERING) {
+      await this.notifyTick(gameId);
     }
   }
 

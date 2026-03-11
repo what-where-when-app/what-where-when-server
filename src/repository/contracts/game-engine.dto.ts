@@ -81,6 +81,8 @@ export interface QuestionData {
 
 export interface ParticipantDomain {
   id: number;
+  categoryId: number;
+  categoryName: string;
   teamId: number;
   gameId: number;
   socketId: string | null;
@@ -113,4 +115,5 @@ export interface LeaderboardEntry {
   categoryId: number;
   categoryName?: string | null;
   score: number;
+  rating: number;
 }

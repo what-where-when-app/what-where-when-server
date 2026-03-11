@@ -360,16 +360,13 @@ describe('GameEngineService', () => {
         id: 10,
         status: 'CORRECT',
       });
-      mockGameRepository.getLeaderboard.mockResolvedValue([
-        { teamName: 'A', score: 1 },
-      ]);
       mockGameRepository.judgeAnswer.mockResolvedValue([
         { participantId: 12, socketId: 1111 },
       ]);
       mockGameRepository.getParticipantAnswerHistory.mockResolvedValue([]);
 
       const result = await service.judgeAnswer(1, 10, 'CORRECT', 99);
-      expect(result.leaderboard[0].score).toBe(1);
+      expect(result.updatedAnswer.status).toBe('CORRECT');
     });
   });
 

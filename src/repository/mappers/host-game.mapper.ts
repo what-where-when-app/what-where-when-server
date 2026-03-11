@@ -145,7 +145,7 @@ export function mapHostGameDetails(game: GameDetailsLike): HostGameDetails {
 
 export class PlayerMapper {
   static toParticipantDomain(
-    data: GameParticipant & { team: Team },
+    data: GameParticipant & { team: Team } & { category: Category },
   ): ParticipantDomain {
     return {
       id: data.id,
@@ -154,6 +154,8 @@ export class PlayerMapper {
       isConnected: !data.isAvailable,
       socketId: data.socketId,
       teamName: data.team.name,
+      categoryId: data.categoryId,
+      categoryName: data.category.name
     };
   }
 }
