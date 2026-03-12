@@ -105,8 +105,17 @@ export class GameEngineService {
   }
 
   public async disconnectParticipant(socketId: string) {
-    await this.gameRepository.setParticipantDisconnected(socketId);
+    const gameId = await this.gameRepository.setParticipantDisconnected(socketId);
     this.logger.log(`Client disconnected: ${socketId}`);
+
+    if (!gameId) return null;
+
+    const participants = await this.gameRepository.getParticipantsByGame(gameId);
+
+    return {
+      gameId,
+      participants,
+    };
   }
 
   async finishGame(gameId: GameId): Promise<GameStatus> {

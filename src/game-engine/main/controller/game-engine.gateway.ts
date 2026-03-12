@@ -186,7 +186,15 @@ export class GameEngineGateway implements OnGatewayDisconnect, OnGatewayInit {
   }
 
   async handleDisconnect(client: Socket) {
-    await this.gameService.disconnectParticipant(client.id);
+    const result = await this.gameService.disconnectParticipant(client.id);
+
+    if (result && result.gameId) {
+      this.server
+        .to(this.getAdminRoom(result.gameId))
+        .emit(GameBroadcastEvent.SyncState, {
+          participants: result.participants,
+        });
+    }
   }
 
   @SubscribeMessage(PlayerRequestEvent.JoinGame)
