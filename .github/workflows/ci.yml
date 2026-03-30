@@ -95,3 +95,31 @@ jobs:
           fi
 
       - run: npm run test:e2e
+
+
+  deploy:
+    name: Deploy to Hetzner
+    needs: [ lint, unit, e2e ]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 204.168.211.123
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            cd /var/www/what-where-when-server
+            
+            git pull origin main
+            
+            npm install --omit=dev
+            
+            npx prisma migrate deploy
+            
+            npm run start
