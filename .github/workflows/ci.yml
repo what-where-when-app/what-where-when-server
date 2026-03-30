@@ -114,12 +114,10 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            cd what-where-when-server
-            
+            cd /root/what-where-when-server
             git pull origin main
-            
-            npm install --omit=dev
-            
+            npm install
+            npm run build
+            npx prisma generate
             npx prisma migrate deploy
-            
-            npm run start
+            pm2 restart what-where-when || pm2 start dist/main.js --name "what-where-when"
