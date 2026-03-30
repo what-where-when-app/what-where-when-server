@@ -116,6 +116,7 @@ jobs:
           script: |
             cd /root/what-where-when-server
             git pull origin main
+            docker compose up -d db
             npm install
             npm run build
             npx prisma generate
