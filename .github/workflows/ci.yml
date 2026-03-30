@@ -113,6 +113,8 @@ jobs:
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
+          timeout: 60s
+          command_timeout: 15m
           script: |
             cd /root/what-where-when-server
             git pull origin main
