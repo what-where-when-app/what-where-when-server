@@ -12,7 +12,8 @@ async function bootstrap() {
     origin.push(process.env.CLIENT_PUBLIC_API_URL);
   }
 
-  const cloudflareRegex = /^https?:\/\/([a-z0-9]+)\.what-where-when\.eu$/;
+  const cloudflareRegex =
+    /^https?:\/\/([a-z0-9]+)\.what-where-when-client\.pages\.dev$/;
   origin.push(cloudflareRegex);
   app.enableCors({
     origin: origin,
