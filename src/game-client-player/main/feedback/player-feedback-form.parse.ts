@@ -9,7 +9,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-function parseNameMap(raw: unknown): Record<string, string> {
+function parseLocaleMap(raw: unknown): Record<string, string> {
   if (!isRecord(raw)) return {};
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(raw)) {
@@ -24,7 +24,7 @@ function parseChips(raw: unknown): FeedbackChips[] {
   for (const c of raw) {
     if (!isRecord(c)) continue;
     if (typeof c.key !== 'string' || c.key.length === 0) continue;
-    out.push({ key: c.key, name: parseNameMap(c.name) });
+    out.push({ key: c.key, name: parseLocaleMap(c.name) });
   }
   return out;
 }
@@ -41,9 +41,12 @@ export function parseFeedbackScreenJson(raw: unknown): FeedbackScreen {
   for (const s of sectionsRaw) {
     if (!isRecord(s)) continue;
     if (typeof s.key !== 'string' || s.key.length === 0) continue;
-    if (typeof s.title !== 'string') continue;
+    const title = parseLocaleMap(s.title);
+    if (Object.keys(title).length === 0) {
+      continue;
+    }
     const chips = parseChips(s.chips);
-    sections.push({ key: s.key, title: s.title, chips });
+    sections.push({ key: s.key, title, chips });
   }
   if (sections.length === 0) {
     throw new BadRequestException({ message: 'Invalid feedback form: no sections' });
