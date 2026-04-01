@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { GameId } from '../../../repository/contracts/common.dto';
 import {
   AnswerDomain,
@@ -15,13 +15,22 @@ import { GameRepository } from '../../../repository/game.repository';
 import { GameCacheService } from './game-cache.service';
 
 @Injectable()
-export class GameEngineService {
+export class GameEngineService implements OnModuleInit {
   private readonly logger = new Logger(GameEngineService.name);
 
   constructor(
     private readonly gameRepository: GameRepository,
     private readonly cache: GameCacheService,
   ) {}
+
+  async onModuleInit() {
+    const cleared = await this.gameRepository.clearAllParticipantSockets();
+    if (cleared > 0) {
+      this.logger.log(
+        `Reset ${cleared} participant socket binding(s) after server start (stale connections)`,
+      );
+    }
+  }
 
   public async getLeaderboard(gameId: GameId): Promise<LeaderboardEntry[]> {
     const [allParticipants, allAnswers] = await Promise.all([
