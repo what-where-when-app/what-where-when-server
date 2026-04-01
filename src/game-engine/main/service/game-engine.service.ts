@@ -13,6 +13,7 @@ import {
 } from '../../../repository/contracts/game-engine.dto';
 import { GameRepository } from '../../../repository/game.repository';
 import { GameCacheService } from './game-cache.service';
+import { JudgingNotAllowedError } from '../errors/judging-not-allowed.error';
 
 @Injectable()
 export class GameEngineService {
@@ -162,6 +163,24 @@ export class GameEngineService {
     verdict: string,
     adminId: number,
   ) {
+    const answer = await this.gameRepository.getAnswerByIdForGame(
+      answerId,
+      gameId,
+    );
+
+    const phase = await this.getPhase(gameId);
+    const qData = await this.cache.getActiveQuestionData(gameId);
+    const activeQuestionId = qData?.questionId ?? null;
+
+    const questionStillLive =
+      (phase === GamePhase.THINKING || phase === GamePhase.ANSWERING) &&
+      activeQuestionId !== null &&
+      activeQuestionId === answer.questionId;
+
+    if (questionStillLive) {
+      throw new JudgingNotAllowedError();
+    }
+
     const updatedData = await this.gameRepository.judgeAnswer(
       answerId,
       verdict,
@@ -169,11 +188,13 @@ export class GameEngineService {
     );
 
     const [updatedAnswer, history] = await Promise.all([
-      this.gameRepository.getAnswerById(answerId),
-      this.gameRepository.getParticipantAnswerHistory(updatedData.gameParticipantId)
+      this.gameRepository.getAnswerByIdForGame(answerId, gameId),
+      this.gameRepository.getParticipantAnswerHistory(
+        updatedData.gameParticipantId,
+      ),
     ]);
 
-    return { updatedAnswer, history, socketId: updatedData.socketId};
+    return { updatedAnswer, history, socketId: updatedData.socketId };
   }
 
   async startNextQuestion(

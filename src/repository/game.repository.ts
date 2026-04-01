@@ -228,6 +228,26 @@ export class GameRepository {
     return AnswerMapper.toDomain(answer);
   }
 
+  async getAnswerByIdForGame(
+    answerId: number,
+    gameId: number,
+  ): Promise<AnswerDomain> {
+    const answer = await this.prisma.answer.findFirst({
+      where: {
+        id: answerId,
+        participant: { gameId },
+      },
+      include: {
+        participant: { include: { team: true } },
+        status: true,
+      },
+    });
+    if (!answer) {
+      throw new Error('Answer not found for this game');
+    }
+    return AnswerMapper.toDomain(answer);
+  }
+
   async judgeAnswer(answerId: number, statusName: string, adminId: number) {
     const newStatusId = await this.getStatusIdOrThrow(statusName);
 
