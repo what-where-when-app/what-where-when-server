@@ -34,6 +34,7 @@ describe('GameEngineService', () => {
     findActiveQuestionData: jest.fn(),
     getQuestionDeadline: jest.fn(),
     getParticipantAnswerHistory: jest.fn(),
+    clearAllParticipantSockets: jest.fn().mockResolvedValue(0),
   };
 
   const mockGameCacheService = {
@@ -135,6 +136,24 @@ describe('GameEngineService', () => {
 
   afterEach(() => {
     jest.useRealTimers();
+  });
+
+  describe('onModuleInit', () => {
+    it('clears all participant socket bindings on startup', async () => {
+      mockGameRepository.clearAllParticipantSockets.mockResolvedValue(2);
+      const moduleRef = await Test.createTestingModule({
+        providers: [
+          GameEngineService,
+          { provide: GameCacheService, useValue: mockGameCacheService },
+          { provide: GameRepository, useValue: mockGameRepository },
+        ],
+      }).compile();
+      await moduleRef.init();
+      expect(mockGameRepository.clearAllParticipantSockets).toHaveBeenCalledTimes(
+        1,
+      );
+      await moduleRef.close();
+    });
   });
 
   describe('Game Lifecycle (Start/Finish)', () => {

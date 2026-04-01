@@ -140,6 +140,15 @@ export class GameRepository {
     return participant.gameId;
   }
 
+  /** After a full process restart no old socket ids are valid; disconnect handlers do not run for them. */
+  async clearAllParticipantSockets(): Promise<number> {
+    const result = await this.prisma.gameParticipant.updateMany({
+      where: { socketId: { not: null } },
+      data: { isAvailable: true, socketId: null },
+    });
+    return result.count;
+  }
+
   async findById(id: number): Promise<Game | null> {
     return this.prisma.game.findUnique({ where: { id } });
   }
