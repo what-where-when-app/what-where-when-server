@@ -112,13 +112,13 @@ model GameParticipant {
 }
 
 model PlayerAppFeedback {
-  id            Int             @id @default(autoincrement())
-  gameId        Int             @map("game_id")
-  participantId Int             @map("participant_id")
-  payload       Json            @default("{}")
-  createdAt     DateTime        @default(now()) @map("created_at")
-  game          Game            @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  participant   GameParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  id            Int              @id @default(autoincrement())
+  gameId        Int?             @map("game_id")
+  participantId Int?             @map("participant_id")
+  payload       Json             @default("{}")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  game          Game?            @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  participant   GameParticipant? @relation(fields: [participantId], references: [id], onDelete: Cascade)
 
   @@index([gameId])
   @@map("player_app_feedback")

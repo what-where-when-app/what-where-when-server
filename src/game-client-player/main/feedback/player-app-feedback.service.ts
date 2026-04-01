@@ -78,22 +78,23 @@ export class PlayerAppFeedbackService {
       throw new BadRequestException({ message: 'Payload too large' });
     }
 
-    const participant =
-      await this.playerGameRepository.findParticipantInGame(
+    if (dto.linkedToGame) {
+      const participant = await this.playerGameRepository.findParticipantInGame(
         dto.participantId,
         dto.gameId,
       );
-    if (!participant) {
-      throw new NotFoundException({
-        code: 'NOT_FOUND',
-        message: 'Participant not found for this game',
-      });
+      if (!participant) {
+        throw new NotFoundException({
+          code: 'NOT_FOUND',
+          message: 'Participant not found for this game',
+        });
+      }
     }
 
     await this.prisma.playerAppFeedback.create({
       data: {
-        gameId: dto.gameId,
-        participantId: dto.participantId,
+        gameId: dto.linkedToGame ? dto.gameId : null,
+        participantId: dto.linkedToGame ? dto.participantId : null,
         payload: dto.payload as unknown as Prisma.InputJsonValue,
       },
     });

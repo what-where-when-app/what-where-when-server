@@ -24,9 +24,13 @@ export interface PlayerAppFeedbackPayload {
   locale?: string;
 }
 
-/** POST /player/feedback */
+/** POST /player/feedback — wire body (`gameId` / `participantId` omitted for home-screen feedback). */
 export interface SubmitPlayerFeedbackDto {
-  gameId: number;
-  participantId: number;
+  gameId?: number;
+  participantId?: number;
   payload: PlayerAppFeedbackPayload;
 }
+
+export type ParsedSubmitPlayerFeedback =
+  | { linkedToGame: true; gameId: number; participantId: number; payload: PlayerAppFeedbackPayload }
+  | { linkedToGame: false; payload: PlayerAppFeedbackPayload };

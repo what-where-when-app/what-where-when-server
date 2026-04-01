@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import type {
   FeedbackScreen,
+  ParsedSubmitPlayerFeedback,
   PlayerAppFeedbackPayload,
   SubmitPlayerFeedbackDto,
 } from './player-feedback.dto';
@@ -41,24 +42,42 @@ function validateSelectionsAgainstForm(
   }
 }
 
+function isAbsent(v: unknown): boolean {
+  return v === undefined || v === null;
+}
+
 /**
- * Validates and normalizes the HTTP body into {@link SubmitPlayerFeedbackDto}.
- * Accepts the typed DTO shape; still coerces/validates at runtime (e.g. JSON number quirks).
+ * Validates and normalizes the HTTP body. Omit both `gameId` and `participantId` for
+ * anonymous feedback (e.g. from the app home screen).
  */
 export function parseSubmitPlayerFeedbackBody(
   body: SubmitPlayerFeedbackDto,
   form: FeedbackScreen,
-): SubmitPlayerFeedbackDto {
+): ParsedSubmitPlayerFeedback {
   if (!isRecord(body)) {
     throw new BadRequestException({ message: 'Invalid body' });
   }
-  const gameId = Number(body.gameId);
-  const participantId = Number(body.participantId);
-  if (!Number.isInteger(gameId) || gameId < 1) {
-    throw new BadRequestException({ message: 'Invalid gameId' });
+  const rawGid = body.gameId;
+  const rawPid = body.participantId;
+  const gidAbsent = isAbsent(rawGid);
+  const pidAbsent = isAbsent(rawPid);
+  if (gidAbsent !== pidAbsent) {
+    throw new BadRequestException({
+      message: 'gameId and participantId must both be set or both omitted',
+    });
   }
-  if (!Number.isInteger(participantId) || participantId < 1) {
-    throw new BadRequestException({ message: 'Invalid participantId' });
+  const linkedToGame = !gidAbsent;
+  let gameId!: number;
+  let participantId!: number;
+  if (linkedToGame) {
+    gameId = Number(rawGid);
+    participantId = Number(rawPid);
+    if (!Number.isInteger(gameId) || gameId < 1) {
+      throw new BadRequestException({ message: 'Invalid gameId' });
+    }
+    if (!Number.isInteger(participantId) || participantId < 1) {
+      throw new BadRequestException({ message: 'Invalid participantId' });
+    }
   }
   const payloadRaw = body.payload;
   if (!isRecord(payloadRaw)) {
@@ -111,5 +130,8 @@ export function parseSubmitPlayerFeedbackBody(
     comment,
     locale,
   };
-  return { gameId, participantId, payload };
+  if (linkedToGame) {
+    return { linkedToGame: true, gameId, participantId, payload };
+  }
+  return { linkedToGame: false, payload };
 }
