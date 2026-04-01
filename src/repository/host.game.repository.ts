@@ -93,7 +93,7 @@ export class HostGameRepository {
           data: {
             gameId: game.id,
             teamId: team.id,
-            categoryId: ownedCategories[0].id,
+            categoryId: team.categoryId ?? ownedCategories[0].id,
             isAvailable: true,
           },
         });
@@ -303,7 +303,7 @@ export class HostGameRepository {
           teamId = updated.id;
         } else {
           const created = await tx.team.create({
-            data: { name: t.name, teamCode: t.team_code, managerId: hostId },
+            data: { name: t.name, teamCode: t.team_code, managerId: hostId, categoryId: t.category_id },
           });
           teamId = created.id;
         }

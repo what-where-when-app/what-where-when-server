@@ -95,3 +95,39 @@ jobs:
           fi
 
       - run: npm run test:e2e
+
+
+  deploy:
+    name: Deploy to Hetzner
+    needs: [ lint, unit, e2e ]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 204.168.211.123
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          timeout: 60s
+          command_timeout: 15m
+          script: |
+            cd /root/what-where-when-server
+            git pull origin main
+            export NODE_OPTIONS="--max-old-space-size=2560"
+            docker compose up -d db
+            
+            npm install
+            npm run build
+            
+            npx prisma generate
+            npx prisma migrate deploy || npx prisma db push
+            
+            pm2 restart what-where-when --node-args="--max-old-space-size=2560" || \
+            pm2 start dist/src/main.js --name "what-where-when" --node-args="--max-old-space-size=2560"
+            
+            pm2 save

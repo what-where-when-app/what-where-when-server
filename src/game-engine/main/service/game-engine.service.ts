@@ -249,6 +249,10 @@ export class GameEngineService {
     if (status === GameStatus.FINISHED) {
       throw new Error('Cannot join: game is already finished');
     }
+    const getParticipant = await this.gameRepository.getParticipantsByGame(gameId);
+    if (getParticipant.find(p => p.teamId === teamId)?.isConnected) {
+      throw new Error('Cannot join: participant already connected');
+    }
 
     const participant = await this.gameRepository.teamJoinGame(
       gameId,

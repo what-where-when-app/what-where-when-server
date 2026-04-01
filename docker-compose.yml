@@ -1,6 +1,10 @@
 services:
   db:
     image: postgres:16
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
     environment:
       POSTGRES_USER: www
       POSTGRES_PASSWORD: www
