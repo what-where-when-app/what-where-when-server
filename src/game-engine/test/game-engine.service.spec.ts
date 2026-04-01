@@ -4,6 +4,7 @@ import {
   GamePhase,
   GameStatus,
 } from '../../repository/contracts/game-engine.dto';
+import { JudgingNotAllowedError } from '../main/errors/judging-not-allowed.error';
 import { GameEngineService } from '../main/service/game-engine.service';
 import { GameCacheService } from '../main/service/game-cache.service';
 
@@ -25,6 +26,7 @@ describe('GameEngineService', () => {
     getQuestionSettings: jest.fn(),
     getLeaderboard: jest.fn(),
     getAnswerById: jest.fn(),
+    getAnswerByIdForGame: jest.fn(),
     judgeAnswer: jest.fn(),
     createDispute: jest.fn(),
     getGameSettings: jest.fn(),
@@ -356,17 +358,71 @@ describe('GameEngineService', () => {
     });
 
     it('judgeAnswer: should return updated answer and leaderboard', async () => {
-      mockGameRepository.getAnswerById.mockResolvedValue({
+      mockGameRepository.getAnswerByIdForGame.mockResolvedValue({
         id: 10,
+        questionId: 101,
         status: 'CORRECT',
       });
-      mockGameRepository.judgeAnswer.mockResolvedValue([
-        { participantId: 12, socketId: 1111 },
-      ]);
+      mockGameRepository.judgeAnswer.mockResolvedValue({
+        gameParticipantId: 12,
+        socketId: 1111,
+      });
       mockGameRepository.getParticipantAnswerHistory.mockResolvedValue([]);
 
       const result = await service.judgeAnswer(1, 10, 'CORRECT', 99);
       expect(result.updatedAnswer.status).toBe('CORRECT');
+      expect(mockGameRepository.getAnswerByIdForGame).toHaveBeenCalledWith(
+        10,
+        1,
+      );
+    });
+
+    it('judgeAnswer: should reject while THINKING on the same active question', async () => {
+      mockGameCacheService._phases.set(1, GamePhase.THINKING);
+      mockGameCacheService._data.set(1, { questionId: 101, questionNumber: 1 });
+      mockGameRepository.getAnswerByIdForGame.mockResolvedValue({
+        id: 10,
+        questionId: 101,
+        status: 'UNSET',
+      });
+
+      await expect(
+        service.judgeAnswer(1, 10, 'CORRECT', 99),
+      ).rejects.toBeInstanceOf(JudgingNotAllowedError);
+      expect(mockGameRepository.judgeAnswer).not.toHaveBeenCalled();
+    });
+
+    it('judgeAnswer: should reject while ANSWERING on the same active question', async () => {
+      mockGameCacheService._phases.set(1, GamePhase.ANSWERING);
+      mockGameCacheService._data.set(1, { questionId: 55, questionNumber: 3 });
+      mockGameRepository.getAnswerByIdForGame.mockResolvedValue({
+        id: 10,
+        questionId: 55,
+        status: 'UNSET',
+      });
+
+      await expect(
+        service.judgeAnswer(1, 10, 'CORRECT', 99),
+      ).rejects.toBeInstanceOf(JudgingNotAllowedError);
+      expect(mockGameRepository.judgeAnswer).not.toHaveBeenCalled();
+    });
+
+    it('judgeAnswer: should allow while THINKING if answer is for another question', async () => {
+      mockGameCacheService._phases.set(1, GamePhase.THINKING);
+      mockGameCacheService._data.set(1, { questionId: 102, questionNumber: 2 });
+      mockGameRepository.getAnswerByIdForGame.mockResolvedValue({
+        id: 10,
+        questionId: 101,
+        status: 'UNSET',
+      });
+      mockGameRepository.judgeAnswer.mockResolvedValue({
+        gameParticipantId: 12,
+        socketId: null,
+      });
+      mockGameRepository.getParticipantAnswerHistory.mockResolvedValue([]);
+
+      await service.judgeAnswer(1, 10, 'CORRECT', 99);
+      expect(mockGameRepository.judgeAnswer).toHaveBeenCalled();
     });
   });
 
