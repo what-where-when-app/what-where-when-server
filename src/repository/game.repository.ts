@@ -125,11 +125,19 @@ export class GameRepository {
     return PlayerMapper.toParticipantDomain(rawResult);
   }
 
-  async setParticipantDisconnected(socketId: string): Promise<void> {
+  async setParticipantDisconnected(socketId: string): Promise<number | null> {
+    const participant = await this.prisma.gameParticipant.findFirst({
+      where: { socketId },
+      select: { gameId: true },
+    });
+    if (!participant) {
+      return null;
+    }
     await this.prisma.gameParticipant.updateMany({
       where: { socketId },
       data: { isAvailable: true, socketId: null },
     });
+    return participant.gameId;
   }
 
   async findById(id: number): Promise<Game | null> {
