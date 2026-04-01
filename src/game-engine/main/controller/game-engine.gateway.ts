@@ -12,6 +12,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { GameEngineService } from '../service/game-engine.service';
 import { WsJwtGuard } from '../guards/ws-jwt.guard';
+import { JudgingNotAllowedError } from '../errors/judging-not-allowed.error';
 import type {
   AdjustTimeDto,
   DisputeDto,
@@ -186,7 +187,15 @@ export class GameEngineGateway implements OnGatewayDisconnect, OnGatewayInit {
   }
 
   async handleDisconnect(client: Socket) {
-    await this.gameService.disconnectParticipant(client.id);
+    const result = await this.gameService.disconnectParticipant(client.id);
+
+    if (result && result.gameId) {
+      this.server
+        .to(this.getAdminRoom(result.gameId))
+        .emit(GameBroadcastEvent.SyncState, {
+          participants: result.participants,
+        });
+    }
   }
 
   @SubscribeMessage(PlayerRequestEvent.JoinGame)
@@ -280,22 +289,30 @@ export class GameEngineGateway implements OnGatewayDisconnect, OnGatewayInit {
   ) {
     await this.ensureAdmin(data.gameId, client);
 
-    const { updatedAnswer, history, socketId } =
-      await this.gameService.judgeAnswer(
-        data.gameId,
-        data.answerId,
-        data.verdict,
-        client['user'].sub,
-      );
+    try {
+      const { updatedAnswer, history, socketId } =
+        await this.gameService.judgeAnswer(
+          data.gameId,
+          data.answerId,
+          data.verdict,
+          client['user'].sub,
+        );
 
-    this.server
-      .to(this.getAdminRoom(data.gameId))
-      .emit(AdminResponseEvent.AnswerUpdate, updatedAnswer);
+      this.server
+        .to(this.getAdminRoom(data.gameId))
+        .emit(AdminResponseEvent.AnswerUpdate, updatedAnswer);
 
-    this.requestLeaderboardUpdate(data.gameId);
+      this.requestLeaderboardUpdate(data.gameId);
 
-    if (socketId) {
-      this.server.to(socketId).emit(PlayerResponseEvent.HistoryUpdate, history);
+      if (socketId) {
+        this.server.to(socketId).emit(PlayerResponseEvent.HistoryUpdate, history);
+      }
+    } catch (e) {
+      if (e instanceof JudgingNotAllowedError) {
+        client.emit('error', { message: e.message, code: e.code });
+        return;
+      }
+      throw e;
     }
   }
 

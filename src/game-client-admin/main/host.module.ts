@@ -10,10 +10,13 @@ import { UserRepository } from '../../repository/user.repository';
 import { HostJwtAuthGuard } from './auth/jwt-auth.guard';
 import { AppConfigModule } from '../../config/app-config.module';
 import { HostGameRepository } from '../../repository/host.game.repository';
+import { GameEngineModule } from '../../game-engine/game-engine.module';
+import { GameExportService } from './export/game-export.service';
 
 @Module({
   imports: [
     AppConfigModule,
+    GameEngineModule,
     PassportModule.register({ defaultStrategy: 'host-jwt' }),
     JwtModule.registerAsync({
       inject: [ConfigService],
@@ -31,6 +34,7 @@ import { HostGameRepository } from '../../repository/host.game.repository';
     HostJwtAuthGuard,
     UserRepository,
     HostGameRepository,
+    GameExportService,
   ],
   exports: [HostService],
 })

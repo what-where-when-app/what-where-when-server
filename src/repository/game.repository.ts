@@ -125,11 +125,19 @@ export class GameRepository {
     return PlayerMapper.toParticipantDomain(rawResult);
   }
 
-  async setParticipantDisconnected(socketId: string): Promise<void> {
+  async setParticipantDisconnected(socketId: string): Promise<number | null> {
+    const participant = await this.prisma.gameParticipant.findFirst({
+      where: { socketId },
+      select: { gameId: true },
+    });
+    if (!participant) {
+      return null;
+    }
     await this.prisma.gameParticipant.updateMany({
       where: { socketId },
       data: { isAvailable: true, socketId: null },
     });
+    return participant.gameId;
   }
 
   /** After a full process restart no old socket ids are valid; disconnect handlers do not run for them. */
@@ -226,6 +234,26 @@ export class GameRepository {
         status: true,
       },
     });
+    return AnswerMapper.toDomain(answer);
+  }
+
+  async getAnswerByIdForGame(
+    answerId: number,
+    gameId: number,
+  ): Promise<AnswerDomain> {
+    const answer = await this.prisma.answer.findFirst({
+      where: {
+        id: answerId,
+        participant: { gameId },
+      },
+      include: {
+        participant: { include: { team: true } },
+        status: true,
+      },
+    });
+    if (!answer) {
+      throw new Error('Answer not found for this game');
+    }
     return AnswerMapper.toDomain(answer);
   }
 
@@ -363,4 +391,61 @@ export class GameRepository {
 
     return answers.map((a) => AnswerMapper.toDomain(a));
   }
+
+  async getGameExportParticipants(gameId: number): Promise<GameExportParticipant[]> {
+    const rows = await this.prisma.gameParticipant.findMany({
+      where: { gameId },
+      include: { team: true, category: true },
+      orderBy: { id: 'asc' },
+    });
+    return rows.map((r) => ({
+      participantId: r.id,
+      teamName: r.team.name,
+      teamCode: r.team.teamCode,
+      categoryId: r.categoryId,
+      categoryName: r.category.name,
+    }));
+  }
+
+  async getGameExportQuestionColumns(
+    gameId: number,
+  ): Promise<GameExportQuestionCol[]> {
+    const rounds = await this.prisma.round.findMany({
+      where: { gameId },
+      orderBy: { roundNumber: 'asc' },
+      include: {
+        questions: {
+          orderBy: { questionNumber: 'asc' },
+          select: { id: true },
+        },
+      },
+    });
+    const cols: GameExportQuestionCol[] = [];
+    let globalIndex = 0;
+    for (const round of rounds) {
+      for (const q of round.questions) {
+        globalIndex++;
+        cols.push({
+          questionId: q.id,
+          roundNumber: round.roundNumber,
+          globalIndex,
+        });
+      }
+    }
+    return cols;
+  }
+}
+
+export interface GameExportParticipant {
+  participantId: number;
+  teamName: string;
+  teamCode: string;
+  categoryId: number;
+  categoryName: string;
+}
+
+export interface GameExportQuestionCol {
+  questionId: number;
+  roundNumber: number;
+  globalIndex: number;
 }

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Post,
+  StreamableFile,
   UseGuards,
 } from '@nestjs/common';
 import { HostAuthService } from '../auth/host-auth.service';
@@ -25,12 +26,14 @@ import type {
   HostRegisterRequest,
   HostRegisterResponse,
 } from '../auth/auth.dto';
+import { GameExportService } from '../export/game-export.service';
 
 @Controller('host')
 export class HostController {
   constructor(
     private readonly auth: HostAuthService,
     private readonly host: HostService,
+    private readonly gameExport: GameExportService,
   ) {}
 
   // ---- Auth ----
@@ -90,6 +93,20 @@ export class HostController {
     @Body() body: SaveGameRequest,
   ): Promise<SaveGameResponse> {
     return this.host.saveGame(host.sub, body);
+  }
+
+  @UseGuards(HostJwtAuthGuard)
+  @Post('game/export-game')
+  async exportGame(
+    @HostUser() host: HostJwtPayload,
+    @Body() body: { game_id: number },
+  ): Promise<StreamableFile> {
+    const buffer = await this.gameExport.buildGameXlsx(host.sub, body.game_id);
+    const filename = `Game_${body.game_id}.xlsx`;
+    return new StreamableFile(buffer, {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      disposition: `attachment; filename="${filename}"`,
+    });
   }
 }
 

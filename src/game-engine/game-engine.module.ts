@@ -22,5 +22,6 @@ import { GameCacheService } from './main/service/game-cache.service';
     WsJwtGuard,
     GameCacheService,
   ],
+  exports: [GameEngineService, GameRepository],
 })
 export class GameEngineModule {}
