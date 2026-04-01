@@ -7,12 +7,16 @@ import {
   Post,
 } from '@nestjs/common';
 import { PlayerService } from './player.service';
-import type { FeedbackScreen, SubmitPlayerFeedbackDto } from './player-feedback.dto';
+import { PlayerAppFeedbackService } from './feedback/player-app-feedback.service';
+import type { FeedbackScreen, SubmitPlayerFeedbackDto } from './feedback/player-feedback.dto';
 import { LeaderboardEntry } from '../../repository/contracts/game-engine.dto';
 
 @Controller('player')
 export class PlayerController {
-  constructor(private readonly playerService: PlayerService) {}
+  constructor(
+    private readonly playerService: PlayerService,
+    private readonly playerAppFeedbackService: PlayerAppFeedbackService,
+  ) {}
 
   @Post('check-game')
   async checkGame(@Body() dto: CheckGameDto): Promise<CheckGameResponse> {
@@ -30,14 +34,14 @@ export class PlayerController {
 
   @Get('feedback-form')
   getFeedbackForm(): FeedbackScreen {
-    return this.playerService.getPlayerFeedbackForm();
+    return this.playerAppFeedbackService.getFeedbackForm();
   }
 
   @Post('feedback')
   async submitFeedback(
     @Body() body: SubmitPlayerFeedbackDto,
   ): Promise<{ ok: boolean }> {
-    return this.playerService.submitAppFeedback(body);
+    return this.playerAppFeedbackService.submitFeedback(body);
   }
 }
 

@@ -6,7 +6,7 @@
     "deleteOutDir": true,
     "assets": [
       {
-        "include": "game-client-player/main/player-feedback-form.default.json",
+        "include": "game-client-player/main/feedback/player-feedback-form.default.json",
         "watchAssets": true
       }
     ]

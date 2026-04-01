@@ -2,7 +2,10 @@
   "sections": [
     {
       "key": "like",
-      "title": "What did you like about it?",
+      "title": {
+        "en": "What did you like about it?",
+        "ru": "Что вам понравилось?"
+      },
       "chips": [
         {
           "key": "easy_to_use",
@@ -28,7 +31,10 @@
     },
     {
       "key": "improve",
-      "title": "What could be improved?",
+      "title": {
+        "en": "What could be improved?",
+        "ru": "Что можно улучшить?"
+      },
       "chips": [
         {
           "key": "more_components",
