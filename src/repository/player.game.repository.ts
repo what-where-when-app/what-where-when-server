@@ -36,4 +36,14 @@ export class PlayerGameRepository {
       })),
     };
   }
+
+  async findParticipantInGame(
+    participantId: number,
+    gameId: number,
+  ): Promise<{ id: number } | null> {
+    return this.prisma.gameParticipant.findFirst({
+      where: { id: participantId, gameId },
+      select: { id: true },
+    });
+  }
 }

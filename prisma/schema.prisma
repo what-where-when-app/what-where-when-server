@@ -50,6 +50,7 @@ model Game {
   participants     GameParticipant[]
   host             User                   @relation("HostGames", fields: [hostId], references: [id])
   rounds           Round[]
+  appFeedbacks     PlayerAppFeedback[]
 
   @@map("games")
 }
@@ -104,9 +105,23 @@ model GameParticipant {
   category    Category @relation(fields: [categoryId], references: [id])
   game        Game     @relation(fields: [gameId], references: [id])
   team        Team     @relation(fields: [teamId], references: [id])
+  appFeedbacks PlayerAppFeedback[]
 
   @@unique([gameId, teamId])
   @@map("game_participants")
+}
+
+model PlayerAppFeedback {
+  id            Int             @id @default(autoincrement())
+  gameId        Int             @map("game_id")
+  participantId Int             @map("participant_id")
+  payload       Json            @default("{}")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  game          Game            @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  participant   GameParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@index([gameId])
+  @@map("player_app_feedback")
 }
 
 model Round {

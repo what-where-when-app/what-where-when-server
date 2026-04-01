@@ -1,0 +1,52 @@
+{
+  "sections": [
+    {
+      "key": "like",
+      "title": "What did you like about it?",
+      "chips": [
+        {
+          "key": "easy_to_use",
+          "name": { "en": "Easy to use", "ru": "Простота использования" }
+        },
+        {
+          "key": "complete",
+          "name": { "en": "Complete", "ru": "Полнота" }
+        },
+        {
+          "key": "intuitive",
+          "name": { "en": "Intuitive", "ru": "Интуитивность" }
+        },
+        {
+          "key": "convenient",
+          "name": { "en": "Convenient", "ru": "Удобство" }
+        },
+        {
+          "key": "looks_good",
+          "name": { "en": "Looks good", "ru": "Внешний вид" }
+        }
+      ]
+    },
+    {
+      "key": "improve",
+      "title": "What could be improved?",
+      "chips": [
+        {
+          "key": "more_components",
+          "name": { "en": "Could have more components", "ru": "Больше компонентов" }
+        },
+        {
+          "key": "complex",
+          "name": { "en": "Complex", "ru": "Сложновато" }
+        },
+        {
+          "key": "not_interactive",
+          "name": { "en": "Not interactive", "ru": "Мало интерактива" }
+        },
+        {
+          "key": "only_english",
+          "name": { "en": "Only English", "ru": "Только английский" }
+        }
+      ]
+    }
+  ]
+}
