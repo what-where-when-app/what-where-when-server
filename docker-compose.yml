@@ -14,5 +14,14 @@ services:
     volumes:
       - www_pg:/var/lib/postgresql/data
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - www_redis:/data
+
 volumes:
   www_pg:
+  www_redis:

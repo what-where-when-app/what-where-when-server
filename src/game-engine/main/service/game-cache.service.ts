@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import type Redis from 'ioredis';
 import { GameId } from '../../../repository/contracts/common.dto';
 import {
   GamePhase,
@@ -6,16 +7,22 @@ import {
   QuestionData,
 } from '../../../repository/contracts/game-engine.dto';
 import { GameRepository } from '../../../repository/game.repository';
+import { REDIS_CLIENT } from '../../../redis/redis.constants';
+
+enum GameCacheField {
+  Phase = 'phase',
+  Status = 'status',
+  ActiveQuestionData = 'activeQuestionData',
+  PhaseDeadlineTs = 'phaseDeadlineTs',
+  PausedSeconds = 'pausedSeconds',
+}
+
+enum QuestionCacheField {
+  DeadlineTs = 'deadlineTs',
+}
 
 @Injectable()
 export class GameCacheService {
-  private readonly phases: Map<GameId, GamePhase> = new Map();
-  private readonly statuses: Map<GameId, GameStatus> = new Map();
-  private readonly activeQuestionIds: Map<GameId, QuestionData> = new Map();
-  private readonly phaseDeadlines = new Map<GameId, number>();
-  private readonly pausedSeconds = new Map<GameId, number>();
-  private readonly questionDeadlines = new Map<number, number>();
-
   private readonly activeTimers: Map<GameId, NodeJS.Timeout> = new Map();
   private readonly tickCallbacks: Map<
     GameId,
@@ -31,98 +38,154 @@ export class GameCacheService {
     (phase: GamePhase) => void
   > = new Map();
 
-  constructor(private readonly gameRepository: GameRepository) {}
+  constructor(
+    private readonly gameRepository: GameRepository,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+  ) {}
+
+  private gameKey(gameId: GameId, field: GameCacheField) {
+    return `game:${gameId}:${field}`;
+  }
+
+  private questionKey(questionId: number, field: QuestionCacheField) {
+    return `question:${questionId}:${field}`;
+  }
+
+  private parseIntOrUndefined(raw: string | null): number | undefined {
+    if (raw === null) return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  }
+
+  private serializeQuestionData(data: QuestionData): string {
+    return JSON.stringify(data);
+  }
+
+  private deserializeQuestionData(raw: string): QuestionData | undefined {
+    try {
+      return JSON.parse(raw) as QuestionData;
+    } catch {
+      return undefined;
+    }
+  }
 
   public async setQuestionDeadline(
     questionId: number,
     timestamp: number,
   ): Promise<void> {
-    this.questionDeadlines.set(questionId, timestamp);
+    const key = this.questionKey(questionId, QuestionCacheField.DeadlineTs);
+    const ttlMs = Math.max(5 * 60_000, timestamp - Date.now() + 5 * 60_000);
+    await this.redis.set(key, String(timestamp), 'PX', ttlMs);
   }
 
   public async getQuestionDeadline(
     questionId: number,
   ): Promise<number | undefined> {
-    let questionDeadline = this.questionDeadlines.get(questionId);
-    if (!questionDeadline) {
-      questionDeadline = await this.gameRepository.getQuestionDeadline(questionId);
+    const key = this.questionKey(questionId, QuestionCacheField.DeadlineTs);
+    const cached = this.parseIntOrUndefined(await this.redis.get(key));
+    if (cached !== undefined) return cached;
+
+    const questionDeadline = await this.gameRepository.getQuestionDeadline(
+      questionId,
+    );
+    if (questionDeadline !== undefined) {
+      await this.setQuestionDeadline(questionId, questionDeadline);
     }
-    return questionDeadline;
+    return questionDeadline ?? undefined;
   }
 
   public async getPhaseEnd(gameId: GameId): Promise<number | undefined> {
-    return this.phaseDeadlines.get(gameId);
+    return this.parseIntOrUndefined(
+      await this.redis.get(this.gameKey(gameId, GameCacheField.PhaseDeadlineTs)),
+    );
   }
 
   public async setPhaseEnd(gameId: GameId, timestamp: number): Promise<void> {
-    this.phaseDeadlines.set(gameId, timestamp);
+    await this.redis.set(
+      this.gameKey(gameId, GameCacheField.PhaseDeadlineTs),
+      String(timestamp),
+    );
   }
 
   public async clearPhaseEnd(gameId: GameId): Promise<void> {
-    this.phaseDeadlines.delete(gameId);
+    await this.redis.del(this.gameKey(gameId, GameCacheField.PhaseDeadlineTs));
   }
 
   public async getPausedSeconds(gameId: GameId): Promise<number | undefined> {
-    return this.pausedSeconds.get(gameId);
+    return this.parseIntOrUndefined(
+      await this.redis.get(this.gameKey(gameId, GameCacheField.PausedSeconds)),
+    );
   }
 
   public async setPausedSeconds(
     gameId: GameId,
     seconds: number,
   ): Promise<void> {
-    this.pausedSeconds.set(gameId, seconds);
+    await this.redis.set(
+      this.gameKey(gameId, GameCacheField.PausedSeconds),
+      String(seconds),
+    );
   }
 
   public async clearPausedSeconds(gameId: GameId): Promise<void> {
-    this.pausedSeconds.delete(gameId);
+    await this.redis.del(this.gameKey(gameId, GameCacheField.PausedSeconds));
   }
 
   public async getPhase(gameId: GameId): Promise<GamePhase> {
-    return this.phases.get(gameId) || GamePhase.IDLE;
+    const raw = await this.redis.get(this.gameKey(gameId, GameCacheField.Phase));
+    if (!raw) return GamePhase.IDLE;
+    return (raw as GamePhase) ?? GamePhase.IDLE;
   }
 
   public async setPhase(gameId: GameId, phase: GamePhase): Promise<void> {
-    this.phases.set(gameId, phase);
+    await this.redis.set(this.gameKey(gameId, GameCacheField.Phase), phase);
   }
 
   public async getStatus(gameId: GameId): Promise<GameStatus | undefined> {
-    let status = this.statuses.get(gameId);
+    const cached = await this.redis.get(this.gameKey(gameId, GameCacheField.Status));
+    if (cached) return cached as GameStatus;
 
-    if (!status) {
-      const game = await this.gameRepository.findById(gameId);
-      if (game) {
-        status = game.status as GameStatus;
-        this.statuses.set(gameId, status);
-      }
+    const game = await this.gameRepository.findById(gameId);
+    if (game) {
+      const status = game.status as GameStatus;
+      await this.redis.set(this.gameKey(gameId, GameCacheField.Status), status);
+      return status;
     }
-    return status;
+    return undefined;
   }
 
   public async setStatus(gameId: GameId, status: GameStatus): Promise<void> {
-    this.statuses.set(gameId, status);
+    await this.redis.set(this.gameKey(gameId, GameCacheField.Status), status);
   }
 
   public async getActiveQuestionData(
     gameId: GameId,
   ): Promise<QuestionData | undefined> {
-    let questionData = this.activeQuestionIds.get(gameId);
-
-    if (!questionData) {
-      const dbQuestionData =
-        await this.gameRepository.findActiveQuestionData(gameId);
-      if (dbQuestionData) {
-        questionData = dbQuestionData;
-        this.activeQuestionIds.set(gameId, questionData);
-      }
+    const key = this.gameKey(gameId, GameCacheField.ActiveQuestionData);
+    const cached = await this.redis.get(key);
+    if (cached) {
+      const parsed = this.deserializeQuestionData(cached);
+      if (parsed) return parsed;
     }
-    return questionData;
+
+    const dbQuestionData = await this.gameRepository.findActiveQuestionData(
+      gameId,
+    );
+    if (dbQuestionData) {
+      await this.redis.set(key, this.serializeQuestionData(dbQuestionData));
+      return dbQuestionData;
+    }
+    return undefined;
   }
 
   public async setActiveQuestionData(
     gameId: GameId,
     questionData: QuestionData,
   ): Promise<void> {
-    this.activeQuestionIds.set(gameId, questionData);
+    await this.redis.set(
+      this.gameKey(gameId, GameCacheField.ActiveQuestionData),
+      this.serializeQuestionData(questionData),
+    );
   }
 
   public getTimer(gameId: GameId): NodeJS.Timeout | undefined {
