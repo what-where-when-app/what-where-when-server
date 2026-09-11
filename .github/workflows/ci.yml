@@ -128,6 +128,6 @@ jobs:
             npx prisma migrate deploy || npx prisma db push
 
             pm2 restart what-where-when --node-args="--max-old-space-size=2560" || \
-            pm2 start dist/src/main.js --name "what-where-when" --node-args="--max-old-space-size=2560"
+            pm2 start dist/main.js --name "what-where-when" --node-args="--max-old-space-size=2560"
 
             pm2 save
