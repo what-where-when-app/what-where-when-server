@@ -98,7 +98,7 @@ jobs:
 
 
   deploy:
-    name: Deploy to Hetzner
+    name: Deploy to VPS
     needs: [ lint, unit, e2e ]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -109,30 +109,25 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: 204.168.211.123
+          host: ${{ secrets.SSH_HOST }}
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           timeout: 60s
           command_timeout: 15m
           script: |
-            cd /root/what-where-when-server
+            cd /opt/what-where-when-server
             git pull origin main
             export NODE_OPTIONS="--max-old-space-size=2560"
             docker compose up -d db redis
-            
+
             npm install
             npm run build
-            
+
             npx prisma generate
             npx prisma migrate deploy || npx prisma db push
-            
+
             pm2 restart what-where-when --node-args="--max-old-space-size=2560" || \
             pm2 start dist/src/main.js --name "what-where-when" --node-args="--max-old-space-size=2560"
-            
-            # Monitoring stack (Prometheus + Grafana + exporters)
-            export WWW_DOCKER_NETWORK="what-where-when-server_default"
-            export PROMETHEUS_CONFIG="./monitoring/prometheus/prometheus.hetzner.yml"
-            docker compose -f docker-compose.monitoring.yml up -d
-            
+
             pm2 save
