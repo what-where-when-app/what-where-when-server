@@ -14,6 +14,7 @@ import {
 import { GameRepository } from '../../../repository/game.repository';
 import { GameCacheService } from './game-cache.service';
 import { JudgingNotAllowedError } from '../errors/judging-not-allowed.error';
+import { GameNotStartableError } from '../errors/game-not-startable.error';
 
 @Injectable()
 export class GameEngineService implements OnModuleInit {
@@ -254,6 +255,24 @@ export class GameEngineService implements OnModuleInit {
       throw new Error('Cannot start a game that is already finished');
     }
 
+    const [orderedQuestionIds, participants] = await Promise.all([
+      this.gameRepository.getOrderedQuestionIds(gameId),
+      this.gameRepository.getParticipantsByGame(gameId),
+    ]);
+
+    if (orderedQuestionIds.length === 0) {
+      throw new GameNotStartableError(
+        'Add at least one question before starting the game.',
+        'NO_QUESTIONS',
+      );
+    }
+    if (participants.length === 0) {
+      throw new GameNotStartableError(
+        'Add at least one team before starting the game.',
+        'NO_TEAMS',
+      );
+    }
+
     const setStatusTo = GameStatus.LIVE;
 
     try {
@@ -277,6 +296,7 @@ export class GameEngineService implements OnModuleInit {
     gameId: GameId,
     teamId: number,
     socketId: string,
+    participantId?: number,
   ) {
     const status = await this.cache.getStatus(gameId);
     if (status === GameStatus.FINISHED) {
@@ -290,6 +310,7 @@ export class GameEngineService implements OnModuleInit {
       gameId,
       teamId,
       socketId,
+      participantId,
     );
 
     const [state, participants] = await Promise.all([
@@ -339,6 +360,8 @@ export class GameEngineService implements OnModuleInit {
       seconds: seconds ?? 0,
       activeQuestionId: activeQuestionData?.questionId,
       activeQuestionNumber: activeQuestionData?.questionNumber,
+      activeGlobalQuestionNumber: activeQuestionData?.globalQuestionNumber,
+      totalQuestions: activeQuestionData?.totalQuestions,
       isPaused: isPaused,
       status: status,
     };
@@ -370,6 +393,9 @@ export class GameEngineService implements OnModuleInit {
       throw new Error('Question not found or does not belong to this game');
     }
 
+    const orderedIds = await this.gameRepository.getOrderedQuestionIds(gameId);
+    const globalIndex = orderedIds.indexOf(questionId);
+
     this.cleanupTimer(gameId);
 
     try {
@@ -377,6 +403,8 @@ export class GameEngineService implements OnModuleInit {
       await this.cache.setActiveQuestionData(gameId, {
         questionId,
         questionNumber: questionSettings.questionNumber,
+        globalQuestionNumber: globalIndex + 1,
+        totalQuestions: orderedIds.length,
       });
 
       this.cache.setCallbacks(gameId, onTick, onPhaseChange);
@@ -518,10 +546,11 @@ export class GameEngineService implements OnModuleInit {
   }
 
   private async isPaused(gameId: GameId) {
-    return (
-      this.cache.getTimer(gameId) === undefined &&
-      (await this.getPhase(gameId)) !== GamePhase.IDLE
-    );
+    const phase = await this.getPhase(gameId);
+    if (phase === GamePhase.IDLE || phase === GamePhase.PREPARATION) {
+      return false;
+    }
+    return this.cache.getTimer(gameId) === undefined;
   }
 
   async adjustTime(gameId: GameId, delta: number) {

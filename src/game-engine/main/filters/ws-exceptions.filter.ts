@@ -7,6 +7,7 @@ import {
 import { WsException } from '@nestjs/websockets';
 import { Socket } from 'socket.io';
 import { JudgingNotAllowedError } from '../errors/judging-not-allowed.error';
+import { GameNotStartableError } from '../errors/game-not-startable.error';
 import { wsErrorsTotal, wsEventsSentTotal } from '../../../monitoring/metrics';
 
 interface ClientErrorPayload {
@@ -40,7 +41,9 @@ export class WsExceptionsFilter implements ExceptionFilter {
           ? rawPattern.filter((x): x is string => typeof x === 'string').join(',')
           : 'unknown';
     const kind =
-      exception instanceof WsException || exception instanceof JudgingNotAllowedError
+      exception instanceof WsException ||
+      exception instanceof JudgingNotAllowedError ||
+      exception instanceof GameNotStartableError
         ? 'expected'
         : 'unexpected';
 
@@ -66,6 +69,10 @@ export class WsExceptionsFilter implements ExceptionFilter {
 
   private toClientPayload(exception: unknown): ClientErrorPayload {
     if (exception instanceof JudgingNotAllowedError) {
+      return { message: exception.message, code: exception.code };
+    }
+
+    if (exception instanceof GameNotStartableError) {
       return { message: exception.message, code: exception.code };
     }
 

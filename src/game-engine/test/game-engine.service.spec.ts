@@ -5,6 +5,7 @@ import {
   GameStatus,
 } from '../../repository/contracts/game-engine.dto';
 import { JudgingNotAllowedError } from '../main/errors/judging-not-allowed.error';
+import { GameNotStartableError } from '../main/errors/game-not-startable.error';
 import { GameEngineService } from '../main/service/game-engine.service';
 import { GameCacheService } from '../main/service/game-cache.service';
 
@@ -165,6 +166,8 @@ describe('GameEngineService', () => {
   describe('Game Lifecycle (Start/Finish)', () => {
     it('startGame: should transition DRAFT to LIVE', async () => {
       mockGameCacheService._statuses.set(1, GameStatus.DRAFT);
+      mockGameRepository.getOrderedQuestionIds.mockResolvedValue([101]);
+      mockGameRepository.getParticipantsByGame.mockResolvedValue([{ id: 1 }]);
       mockGameRepository.updateStatus.mockResolvedValue({
         status: GameStatus.LIVE,
       });
@@ -180,6 +183,26 @@ describe('GameEngineService', () => {
     it('startGame: should throw if game is FINISHED', async () => {
       mockGameCacheService._statuses.set(1, GameStatus.FINISHED);
       await expect(service.startGame(1)).rejects.toThrow('already finished');
+    });
+
+    it('startGame: should throw GameNotStartableError if there are no questions', async () => {
+      mockGameCacheService._statuses.set(1, GameStatus.DRAFT);
+      mockGameRepository.getOrderedQuestionIds.mockResolvedValue([]);
+      mockGameRepository.getParticipantsByGame.mockResolvedValue([{ id: 1 }]);
+
+      await expect(service.startGame(1)).rejects.toThrow(
+        GameNotStartableError,
+      );
+    });
+
+    it('startGame: should throw GameNotStartableError if there are no teams', async () => {
+      mockGameCacheService._statuses.set(1, GameStatus.DRAFT);
+      mockGameRepository.getOrderedQuestionIds.mockResolvedValue([101]);
+      mockGameRepository.getParticipantsByGame.mockResolvedValue([]);
+
+      await expect(service.startGame(1)).rejects.toThrow(
+        GameNotStartableError,
+      );
     });
 
     it('finishGame: should cleanup timer and set status', async () => {
@@ -201,6 +224,7 @@ describe('GameEngineService', () => {
         questionNumber: 1,
         gameId: 1,
       });
+      mockGameRepository.getOrderedQuestionIds.mockResolvedValue([101]);
 
       await service.prepareQuestion(1, 101, jest.fn(), jest.fn());
 
@@ -210,6 +234,28 @@ describe('GameEngineService', () => {
       );
       expect(mockGameCacheService.clearPhaseEnd).toHaveBeenCalled();
       expect(mockGameCacheService.clearPausedSeconds).toHaveBeenCalled();
+    });
+
+    it('prepareQuestion: should compute globalQuestionNumber from the game-wide question order, not the per-round questionNumber', async () => {
+      mockGameCacheService._statuses.set(1, GameStatus.LIVE);
+      mockGameRepository.getQuestionSettings.mockResolvedValue({
+        timeToThink: 60,
+        questionNumber: 1, // round 2's first question also has questionNumber 1
+        gameId: 1,
+      });
+      mockGameRepository.getOrderedQuestionIds.mockResolvedValue([101, 102, 201, 202]);
+
+      await service.prepareQuestion(1, 201, jest.fn(), jest.fn());
+
+      expect(mockGameCacheService.setActiveQuestionData).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          questionId: 201,
+          questionNumber: 1,
+          globalQuestionNumber: 3,
+          totalQuestions: 4,
+        }),
+      );
     });
 
     it('startQuestionCycle: should set absolute questionDeadline (T+A)', async () => {

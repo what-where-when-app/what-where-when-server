@@ -110,16 +110,45 @@ export class GameRepository {
   }
 
   /**
-   * Atomically claims a (gameId, teamId) slot for a connecting socket. The
-   * conditional `socketId: null` filter ensures only one of two concurrent
-   * joins for the same team can win the slot; the loser sees `count === 0`
-   * and we throw, letting the caller surface "team already taken".
+   * Atomically claims a (gameId, teamId) slot for a connecting socket.
+   *
+   * If the caller already knows its own `participantId` (a returning
+   * client reconnecting after a network blip or app background/foreground
+   * cycle), we reclaim by identity first — this succeeds even if the old
+   * socketId is still set, since the server hasn't run the disconnect
+   * handler for the stale socket yet. Without this, a brief connectivity
+   * gap would race against the server's own disconnect cleanup and the
+   * same team could get locked out of its own slot with "already taken".
+   *
+   * Otherwise (first join, or an unrecognized participantId), fall back to
+   * the conditional `socketId: null` claim: only one of two concurrent
+   * first-time joins for the same team can win, and the loser sees
+   * `count === 0` and we throw, letting the caller surface "already taken".
    */
   async teamJoinGame(
     gameId: number,
     teamId: number,
     socketId: string,
+    participantId?: number,
   ): Promise<ParticipantDomain> {
+    if (participantId !== undefined) {
+      const reclaim = await this.prisma.gameParticipant.updateMany({
+        where: { id: participantId, gameId, teamId },
+        data: {
+          isAvailable: false,
+          socketId: socketId,
+        },
+      });
+
+      if (reclaim.count > 0) {
+        const claimed = await this.prisma.gameParticipant.findUniqueOrThrow({
+          where: { gameId_teamId: { gameId, teamId } },
+          include: { team: true, category: true },
+        });
+        return PlayerMapper.toParticipantDomain(claimed);
+      }
+    }
+
     const claim = await this.prisma.gameParticipant.updateMany({
       where: {
         gameId,
@@ -390,13 +419,16 @@ export class GameRepository {
         questionDeadline: true,
       },
     });
-    return question
-      ? {
-          questionId: question?.id,
-          questionNumber: question?.questionNumber,
-          questionDeadline: question.questionDeadline?.getTime(),
-        }
-      : null;
+    if (!question) return null;
+
+    const orderedIds = await this.getOrderedQuestionIds(gameId);
+    return {
+      questionId: question.id,
+      questionNumber: question.questionNumber,
+      globalQuestionNumber: orderedIds.indexOf(question.id) + 1,
+      totalQuestions: orderedIds.length,
+      questionDeadline: question.questionDeadline?.getTime(),
+    };
   }
 
   async updateQuestionDeadline(questionId: number, deadline: Date) {
@@ -430,7 +462,12 @@ export class GameRepository {
         },
         status: true,
       },
-      orderBy: { question: { questionNumber: 'asc' } },
+      // questionNumber is only unique per round, so sorting by it alone
+      // interleaves rounds; order by round first, then question within it.
+      orderBy: [
+        { question: { round: { roundNumber: 'asc' } } },
+        { question: { questionNumber: 'asc' } },
+      ],
     });
 
     return answers.map((a) => AnswerMapper.toDomain(a));
