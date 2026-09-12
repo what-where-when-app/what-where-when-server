@@ -15,6 +15,7 @@ import {
   AnswerStatus,
   ParticipantDomain,
 } from '../contracts/game-engine.dto';
+import { normalizeAnswerText, levenshteinDistance } from '../../game-engine/main/service/answer-grouping.util';
 
 
 export type GameListLike = {
@@ -163,6 +164,20 @@ export class PlayerMapper {
 export class AnswerMapper {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   static toDomain(raw: any): AnswerDomain {
+    const normalized = normalizeAnswerText(raw.answerText);
+    const acceptedAnswerText: string | undefined = raw.question?.answer;
+    const acceptedNormalized = acceptedAnswerText
+      ? normalizeAnswerText(acceptedAnswerText)
+      : '';
+    const matchesAccepted =
+      acceptedNormalized !== '' && normalized === acceptedNormalized;
+
+    let charactersOff: number | null = null;
+    if (!matchesAccepted && acceptedNormalized !== '' && normalized !== '') {
+      const distance = levenshteinDistance(normalized, acceptedNormalized);
+      if (distance > 0 && distance <= 2) charactersOff = distance;
+    }
+
     return {
       id: raw.id,
       questionId: raw.questionId,
@@ -173,6 +188,9 @@ export class AnswerMapper {
       status: raw.status?.name || AnswerStatus.UNSET,
       submittedAt: raw.submittedAt.toISOString(),
       lateBySeconds: raw.lateBySeconds,
+      groupKey: normalized === '' ? `__single_${raw.id}` : normalized,
+      matchesAccepted,
+      charactersOff,
     };
   }
 }

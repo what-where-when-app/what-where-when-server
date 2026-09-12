@@ -93,6 +93,7 @@ export class GameRepository {
       include: {
         participant: { include: { team: true } },
         status: true,
+        question: { select: { answer: true } },
       },
       orderBy: { submittedAt: 'asc' },
     });
@@ -276,6 +277,7 @@ export class GameRepository {
           include: {
             participant: { include: { team: true } },
             status: true,
+            question: { select: { answer: true } },
           },
         });
         return AnswerMapper.toDomain(updated);
@@ -293,6 +295,7 @@ export class GameRepository {
         include: {
           participant: { include: { team: true } },
           status: true,
+          question: { select: { answer: true } },
         },
       });
       return AnswerMapper.toDomain(created);
@@ -305,6 +308,7 @@ export class GameRepository {
       include: {
         participant: { include: { team: true } },
         status: true,
+        question: { select: { answer: true } },
       },
     });
     return AnswerMapper.toDomain(answer);
@@ -322,6 +326,7 @@ export class GameRepository {
       include: {
         participant: { include: { team: true } },
         status: true,
+        question: { select: { answer: true } },
       },
     });
     if (!answer) {
