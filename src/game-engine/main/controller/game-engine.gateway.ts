@@ -19,6 +19,7 @@ import type {
   DisputeDto,
   JoinGameDto,
   JudgeAnswerDto,
+  JudgeAnswersBulkDto,
   StartQuestionDto,
   SubmitAnswerDto,
 } from '../../../repository/contracts/game-engine.dto';
@@ -41,6 +42,7 @@ export enum AdminRequestEvent {
   PrepareQuestion = 'admin:prepare_question', // Triggers preparation state of the question
   StartQuestion = 'admin:start_question', // Triggers the start of a specific question cycle
   JudgeAnswer = 'admin:judge_answer', // Submits host's verdict (correct/wrong) for a team's answer
+  JudgeAnswersBulk = 'admin:judge_answers_bulk', // Submits the same verdict for a batch of answers (e.g. a group of identical answers) in one round trip
   AdjustTime = 'admin:adjust_time', // Adds or subtracts seconds from the current active timer
   PauseTimer = 'admin:pause_timer', // Pauses the current question timer
   ResumeTimer = 'admin:resume_timer', // Resumes the current question timer
@@ -387,6 +389,43 @@ export class GameEngineGateway
 
     if (socketId) {
       this.emitWsRoom(socketId, PlayerResponseEvent.HistoryUpdate, history);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage(AdminRequestEvent.JudgeAnswersBulk)
+  async handleJudgeBulk(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: JudgeAnswersBulkDto,
+  ) {
+    await this.ensureAdmin(data.gameId, client);
+
+    const { succeeded, failed } = await this.gameService.judgeAnswersBulk(
+      data.gameId,
+      data.answerIds,
+      data.verdict,
+      client['user'].sub,
+    );
+
+    for (const { updatedAnswer, history, socketId } of succeeded) {
+      this.emitWsRoom(
+        this.getAdminRoom(data.gameId),
+        AdminResponseEvent.AnswerUpdate,
+        updatedAnswer,
+      );
+      if (socketId) {
+        this.emitWsRoom(socketId, PlayerResponseEvent.HistoryUpdate, history);
+      }
+    }
+
+    if (succeeded.length > 0) {
+      this.requestLeaderboardUpdate(data.gameId);
+    }
+
+    if (failed.length > 0) {
+      this.emitWsClient(client, 'error', {
+        message: `${failed.length} of ${data.answerIds.length} answers could not be judged.`,
+      });
     }
   }
 
