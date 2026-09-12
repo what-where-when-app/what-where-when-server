@@ -54,6 +54,12 @@ export interface JudgeAnswerDto {
   verdict: string;
 }
 
+export interface AddManualAnswerDto {
+  gameId: number;
+  participantId: number;
+  questionId: number;
+}
+
 export interface DisputeDto {
   gameId: number;
   answerId: number;
