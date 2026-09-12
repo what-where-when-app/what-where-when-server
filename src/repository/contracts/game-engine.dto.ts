@@ -27,6 +27,7 @@ export enum DisputeStatus {
 export interface JoinGameDto {
   gameId: number;
   teamId: number;
+  participantId?: number;
 }
 
 export interface StartQuestionDto {
@@ -70,12 +71,20 @@ export interface GameState {
   isPaused: boolean;
   activeQuestionId?: number,
   activeQuestionNumber?: number,
+  // Position of the active question across the whole game (all rounds),
+  // for "Question X of Y" style display. questionNumber is only unique
+  // per round (see @@unique([roundId, questionNumber])), so it resets at
+  // the start of every round and must never be used for this.
+  activeGlobalQuestionNumber?: number,
+  totalQuestions?: number,
   status?: GameStatus;
 }
 
 export interface QuestionData {
   questionId: number;
   questionNumber: number;
+  globalQuestionNumber: number;
+  totalQuestions: number;
   questionDeadline?: number;
 }
 

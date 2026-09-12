@@ -103,6 +103,35 @@ export class HostGameRepository {
     });
   }
 
+  /**
+   * Throws if any of the given question ids are currently active or already
+   * have a submitted answer — those are the ones the live session depends
+   * on, so deleting or rewriting them mid-game would corrupt it. Safe to
+   * call with an empty array (e.g. a round with no questions yet).
+   */
+  private async assertQuestionsNotPlayed(
+    tx: Prisma.TransactionClient,
+    questionIds: number[],
+  ): Promise<void> {
+    if (questionIds.length === 0) return;
+
+    const played = await tx.question.findFirst({
+      where: {
+        id: { in: questionIds },
+        OR: [{ isActive: true }, { answers: { some: {} } }],
+      },
+      select: { id: true },
+    });
+
+    if (played) {
+      throw new ConflictException({
+        code: 'CONFLICT',
+        message:
+          'Cannot delete or edit a question that is currently active or already has submitted answers.',
+      });
+    }
+  }
+
   private async allocateAvailablePasscode(
     tx: Prisma.TransactionClient,
   ): Promise<number> {
@@ -176,6 +205,23 @@ export class HostGameRepository {
         });
       }
 
+      if (existing.status === GameStatus.FINISHED) {
+        // Once a game is over, its results should stay an immutable record.
+        throw new ConflictException({
+          code: 'CONFLICT',
+          message: 'This game has finished — it can no longer be edited.',
+        });
+      }
+
+      // While LIVE, most edits are still safe and genuinely useful (adding a
+      // late-arriving team, fixing a typo in a question that hasn't been
+      // played yet, tweaking settings). What's NOT safe is deleting or
+      // rewriting a round/question the running session already depends on
+      // (the active one, or one teams have already answered), or removing a
+      // team that has already submitted an answer. Those are blocked below;
+      // everything else is allowed regardless of status.
+      const isLive = existing.status === GameStatus.LIVE;
+
       const currentVersion = gameVersion(existing);
       if (currentVersion !== req.version) {
         throw new ConflictException({
@@ -204,6 +250,9 @@ export class HostGameRepository {
       });
 
       if (req.deleted_question_ids?.length) {
+        if (isLive) {
+          await this.assertQuestionsNotPlayed(tx, req.deleted_question_ids);
+        }
         await tx.question.deleteMany({
           where: {
             id: { in: req.deleted_question_ids },
@@ -213,6 +262,15 @@ export class HostGameRepository {
       }
 
       if (req.deleted_round_ids?.length) {
+        if (isLive) {
+          const roundQuestionIds = (
+            await tx.question.findMany({
+              where: { roundId: { in: req.deleted_round_ids } },
+              select: { id: true },
+            })
+          ).map((q) => q.id);
+          await this.assertQuestionsNotPlayed(tx, roundQuestionIds);
+        }
         await tx.question.deleteMany({
           where: {
             roundId: { in: req.deleted_round_ids },
@@ -225,6 +283,24 @@ export class HostGameRepository {
       }
 
       if (req.deleted_team_ids?.length) {
+        if (isLive) {
+          const answered = await tx.answer.findFirst({
+            where: {
+              participant: {
+                gameId: existing.id,
+                teamId: { in: req.deleted_team_ids },
+              },
+            },
+            select: { id: true },
+          });
+          if (answered) {
+            throw new ConflictException({
+              code: 'CONFLICT',
+              message:
+                'Cannot remove a team that has already submitted an answer in this game.',
+            });
+          }
+        }
         await tx.gameParticipant.deleteMany({
           where: { gameId: existing.id, teamId: { in: req.deleted_team_ids } },
         });
@@ -289,7 +365,9 @@ export class HostGameRepository {
       for (const t of req.game.teams) {
         let teamId: number;
         if (t.id) {
-          const ownedTeam = await tx.team.findFirst({ where: { id: t.id } });
+          const ownedTeam = await tx.team.findFirst({
+            where: { id: t.id, managerId: hostId },
+          });
           if (!ownedTeam) {
             throw new NotFoundException({
               code: 'NOT_FOUND',
@@ -363,6 +441,24 @@ export class HostGameRepository {
                 code: 'NOT_FOUND',
                 message: `Question not found: ${q.id}`,
               });
+            }
+            if (isLive) {
+              // The client always resends the full game state, so most
+              // questions arrive "unchanged" on every save (e.g. adding a
+              // team also resends every existing question as-is). Only
+              // block this one if its content is actually different from
+              // what's stored — a harmless no-op resend of a played
+              // question must still be allowed through.
+              const hasContentChange =
+                ownedQuestion.roundId !== roundId ||
+                ownedQuestion.questionNumber !== q.question_number ||
+                ownedQuestion.text !== q.text ||
+                ownedQuestion.answer !== q.answer ||
+                ownedQuestion.timeToThink !== q.time_to_think_sec ||
+                ownedQuestion.timeToAnswer !== q.time_to_answer_sec;
+              if (hasContentChange) {
+                await this.assertQuestionsNotPlayed(tx, [q.id]);
+              }
             }
             await tx.question.update({
               where: { id: q.id },

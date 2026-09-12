@@ -10,4 +10,9 @@ module.exports = {
   testEnvironment: 'node',
   setupFiles: ['<rootDir>/test/setup-env.ts'],
   testTimeout: 30000,
+  // All e2e spec files share one real Postgres instance and each file's
+  // beforeAll/afterAll truncates every table via resetDb(). Running spec
+  // files in parallel workers (Jest's default) lets one file's truncation
+  // race another file's in-flight assertions. Force serial execution.
+  maxWorkers: 1,
 };

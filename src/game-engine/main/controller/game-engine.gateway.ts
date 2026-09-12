@@ -55,6 +55,7 @@ export enum AdminRequestEvent {
 export enum AdminResponseEvent {
   AnswerUpdate = 'admin:answer_update', // Pushes a single AnswerDomain object when a team submits or host judges
   NewDispute = 'admin:new_dispute', // Notifies admins about a team raising a dispute
+  NoMoreQuestions = 'admin:no_more_questions', // Ack to the caller: NextQuestion was a no-op, the question list is exhausted
 }
 
 /**
@@ -175,7 +176,7 @@ export class GameEngineGateway
   ) {
     await this.ensureAdmin(data.gameId, client);
 
-    await this.gameService.startNextQuestion(
+    const nextQuestionId = await this.gameService.startNextQuestion(
       data.gameId,
       (gId, seconds, phase, qData) => {
         this.emitWsRoom(this.getRoom(gId), GameBroadcastEvent.TimerUpdate, {
@@ -183,12 +184,18 @@ export class GameEngineGateway
           phase,
           activeQuestionId: qData?.questionId,
           activeQuestionNumber: qData?.questionNumber,
+          activeGlobalQuestionNumber: qData?.globalQuestionNumber,
+          totalQuestions: qData?.totalQuestions,
         });
       },
       (phase) => {
         this.logger.log(`Game ${data.gameId} phase changed to ${phase}`);
       },
     );
+
+    if (nextQuestionId === null) {
+      this.emitWsClient(client, AdminResponseEvent.NoMoreQuestions);
+    }
   }
 
   @UseGuards(WsJwtGuard)
@@ -251,6 +258,7 @@ export class GameEngineGateway
         data.gameId,
         data.teamId,
         client.id,
+        data.participantId,
       );
     } catch (e) {
       // Surface a stable, user-friendly message for join failures.
@@ -301,6 +309,8 @@ export class GameEngineGateway
           phase,
           activeQuestionId: qData?.questionId,
           activeQuestionNumber: qData?.questionNumber,
+          activeGlobalQuestionNumber: qData?.globalQuestionNumber,
+          totalQuestions: qData?.totalQuestions,
         });
       },
       (phase) => {
@@ -341,6 +351,13 @@ export class GameEngineGateway
         AdminResponseEvent.AnswerUpdate,
         result,
       );
+    } else {
+      // processAnswer rejects silently (game/phase/question no longer
+      // matches) — without this, the client never hears back at all and
+      // its "submitting" state gets stuck forever.
+      this.emitWsClient(client, 'error', {
+        message: 'Your answer could not be submitted — the question may have already ended.',
+      });
     }
   }
 
