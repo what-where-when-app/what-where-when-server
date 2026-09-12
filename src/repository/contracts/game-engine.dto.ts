@@ -54,6 +54,12 @@ export interface JudgeAnswerDto {
   verdict: string;
 }
 
+export interface JudgeAnswersBulkDto {
+  gameId: number;
+  answerIds: number[];
+  verdict: string;
+}
+
 export interface DisputeDto {
   gameId: number;
   answerId: number;
@@ -109,6 +115,9 @@ export interface AnswerDomain {
   status: string;
   submittedAt: string;
   lateBySeconds?: number;
+  groupKey: string;
+  matchesAccepted: boolean;
+  charactersOff: number | null;
 }
 
 export interface QuestionSettings {

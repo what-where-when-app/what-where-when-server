@@ -209,6 +209,43 @@ export class GameEngineService implements OnModuleInit {
     return { updatedAnswer, history, socketId: updatedData.socketId };
   }
 
+  /**
+   * Judges a batch of answers (e.g. every member of a text-similarity
+   * group) in one call instead of the client looping judgeAnswer per id.
+   * Reuses judgeAnswer's own gating/history logic per item; one bad id
+   * (already judged race, question still live, etc.) doesn't block the
+   * rest of the batch.
+   */
+  async judgeAnswersBulk(
+    gameId: number,
+    answerIds: number[],
+    verdict: string,
+    adminId: number,
+  ): Promise<{
+    succeeded: Array<Awaited<ReturnType<GameEngineService['judgeAnswer']>>>;
+    failed: Array<{ answerId: number; error: string }>;
+  }> {
+    const succeeded: Array<
+      Awaited<ReturnType<GameEngineService['judgeAnswer']>>
+    > = [];
+    const failed: Array<{ answerId: number; error: string }> = [];
+
+    for (const answerId of answerIds) {
+      try {
+        succeeded.push(
+          await this.judgeAnswer(gameId, answerId, verdict, adminId),
+        );
+      } catch (error) {
+        failed.push({
+          answerId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return { succeeded, failed };
+  }
+
   async startNextQuestion(
     gameId: GameId,
     onTick: (
