@@ -243,6 +243,21 @@ export class GameRepository {
     ]);
   }
 
+  async getAnswerForParticipantAndQuestion(
+    participantId: number,
+    questionId: number,
+  ): Promise<{ id: number } | null> {
+    return this.prisma.answer.findUnique({
+      where: {
+        gameParticipantId_questionId: {
+          gameParticipantId: participantId,
+          questionId: questionId,
+        },
+      },
+      select: { id: true },
+    });
+  }
+
   async saveAnswer(
     participantId: number,
     questionId: number,
