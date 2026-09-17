@@ -16,6 +16,12 @@ import { GameCacheService } from './game-cache.service';
 import { JudgingNotAllowedError } from '../errors/judging-not-allowed.error';
 import { GameNotStartableError } from '../errors/game-not-startable.error';
 
+// How long after a question closes a delayed submission may still land.
+// Long enough to cover a real reconnect (a mobile network coming back
+// takes tens of seconds), short enough that it can't be used to answer
+// after the host has read the answer out and moved on.
+const LATE_DELIVERY_GRACE_MS = 90_000;
+
 @Injectable()
 export class GameEngineService implements OnModuleInit {
   private readonly logger = new Logger(GameEngineService.name);
@@ -454,6 +460,60 @@ export class GameEngineService implements OnModuleInit {
     );
   }
 
+  /**
+   * A player can lose connection mid-submit and only get their packet
+   * through after the host has already moved on. Dropping it there loses an
+   * answer the team genuinely produced in time, through no fault of theirs,
+   * so a delivery that arrives shortly after the question closed is still
+   * stored — flagged with its real lateness, for the host to judge.
+   *
+   * Deliberately narrow, so this can't become a way to answer a question
+   * after hearing the answer read out:
+   *  - only within LATE_DELIVERY_GRACE_MS of the question's deadline;
+   *  - only into an empty slot, never overwriting an existing answer.
+   */
+  private async canAcceptLateDelivery(data: SubmitAnswerDto): Promise<boolean> {
+    const context = await this.gameRepository.getLateDeliveryContext(
+      data.gameId,
+      data.questionId,
+      data.participantId,
+    );
+
+    if (!context) {
+      this.logger.warn(
+        `Answer rejected: question ${data.questionId} does not belong to game ${data.gameId}`,
+      );
+      return false;
+    }
+
+    if (context.deadline === undefined) {
+      this.logger.warn(
+        `Answer rejected: question ${data.questionId} was never started, so nothing could have been submitted for it`,
+      );
+      return false;
+    }
+
+    if (context.hasExistingAnswer) {
+      this.logger.warn(
+        `Answer rejected: participant ${data.participantId} already has an answer for closed question ${data.questionId}`,
+      );
+      return false;
+    }
+
+    const sinceDeadline = Date.now() - context.deadline;
+    if (sinceDeadline > LATE_DELIVERY_GRACE_MS) {
+      this.logger.warn(
+        `Answer rejected: question ${data.questionId} closed ${Math.round(sinceDeadline / 1000)}s ago, beyond the late-delivery grace period`,
+      );
+      return false;
+    }
+
+    this.logger.log(
+      `Accepting late delivery for question ${data.questionId} from participant ${data.participantId} (${Math.round(sinceDeadline / 1000)}s after close)`,
+    );
+    return true;
+  }
+
   async processAnswer(data: SubmitAnswerDto): Promise<AnswerDomain | null> {
     const status = await this.cache.getStatus(data.gameId);
     if (status !== GameStatus.LIVE) {
@@ -463,21 +523,19 @@ export class GameEngineService implements OnModuleInit {
       return null;
     }
 
-    const phase = await this.getPhase(data.gameId);
-    if (phase !== GamePhase.THINKING && phase !== GamePhase.ANSWERING) {
-      this.logger.warn(
-        `Answer rejected: game ${data.gameId} phase is ${phase}, expected THINKING or ANSWERING`,
-      );
-      return null;
-    }
-
     const activeQuestionData = await this.cache.getActiveQuestionData(
       data.gameId,
     );
-    if (activeQuestionData?.questionId !== data.questionId) {
-      this.logger.warn(
-        `Answer rejected: question ${data.questionId} is not the active question for game ${data.gameId}`,
-      );
+
+    if (activeQuestionData?.questionId === data.questionId) {
+      const phase = await this.getPhase(data.gameId);
+      if (phase !== GamePhase.THINKING && phase !== GamePhase.ANSWERING) {
+        this.logger.warn(
+          `Answer rejected: game ${data.gameId} phase is ${phase}, expected THINKING or ANSWERING`,
+        );
+        return null;
+      }
+    } else if (!(await this.canAcceptLateDelivery(data))) {
       return null;
     }
 
