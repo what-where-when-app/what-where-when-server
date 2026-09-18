@@ -299,6 +299,39 @@ export class GameRepository {
     });
   }
 
+  /**
+   * Everything needed to decide whether an answer that arrived after its
+   * question stopped being the active one may still be stored: that the
+   * question really belongs to this game, when it closed, and whether this
+   * participant already has an answer recorded for it.
+   *
+   * Returns null when the question isn't part of the game at all.
+   */
+  async getLateDeliveryContext(
+    gameId: number,
+    questionId: number,
+    participantId: number,
+  ): Promise<{ deadline?: number; hasExistingAnswer: boolean } | null> {
+    const question = await this.prisma.question.findFirst({
+      where: { id: questionId, round: { gameId } },
+      select: {
+        questionDeadline: true,
+        answers: {
+          where: { gameParticipantId: participantId },
+          select: { id: true },
+          take: 1,
+        },
+      },
+    });
+
+    if (!question) return null;
+
+    return {
+      deadline: question.questionDeadline?.getTime(),
+      hasExistingAnswer: question.answers.length > 0,
+    };
+  }
+
   async getAnswerById(answerId: number): Promise<AnswerDomain> {
     const answer = await this.prisma.answer.findUniqueOrThrow({
       where: { id: answerId },

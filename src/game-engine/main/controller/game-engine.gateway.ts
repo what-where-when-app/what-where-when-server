@@ -101,6 +101,17 @@ export enum GameBroadcastEvent {
     credentials: true,
   },
   namespace: 'game',
+  // Defaults (25s/20s) take up to ~45s to notice a dead socket — too slow
+  // for the host to see who's actually offline mid-game. Check more often
+  // and give up sooner, and lean on connectionStateRecovery (below) to
+  // make the resulting reconnect cheap rather than on tolerating silence.
+  pingInterval: 10000,
+  pingTimeout: 10000,
+  // Lets a client that reconnects within the window resume its session
+  // (rooms rejoined, missed broadcasts replayed) instead of starting from
+  // a blank socket — so detecting drops fast doesn't mean flapping on
+  // every short blip.
+  connectionStateRecovery: {},
 })
 export class GameEngineGateway
   implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit

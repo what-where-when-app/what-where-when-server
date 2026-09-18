@@ -35,6 +35,7 @@ describe('GameEngineService', () => {
     findActiveQuestionData: jest.fn(),
     getQuestionDeadline: jest.fn(),
     getParticipantAnswerHistory: jest.fn(),
+    getLateDeliveryContext: jest.fn(),
     clearAllParticipantSockets: jest.fn().mockResolvedValue(0),
   };
 
@@ -466,10 +467,12 @@ describe('GameEngineService', () => {
       expect(mockGameRepository.saveAnswer).not.toHaveBeenCalled();
     });
 
-    it('processAnswer: should reject when questionId does not match active question', async () => {
+    it('processAnswer: should reject when questionId does not belong to the game', async () => {
       mockGameCacheService._statuses.set(1, GameStatus.LIVE);
       mockGameCacheService._phases.set(1, GamePhase.ANSWERING);
       mockGameCacheService._data.set(1, { questionId: 999, questionNumber: 1 });
+      mockGameRepository.getLateDeliveryContext.mockResolvedValue(null);
+
       const dto = {
         gameId: 1,
         participantId: 5,
@@ -479,6 +482,106 @@ describe('GameEngineService', () => {
       };
 
       const result = await service.processAnswer(dto);
+      expect(result).toBeNull();
+      expect(mockGameRepository.saveAnswer).not.toHaveBeenCalled();
+    });
+
+    it('processAnswer: should store an answer delivered shortly after its question closed', async () => {
+      const deadline = Date.now() - 5_000;
+      mockGameCacheService._statuses.set(1, GameStatus.LIVE);
+      // Host already moved on: a different question is active, and the
+      // game is between questions.
+      mockGameCacheService._phases.set(1, GamePhase.PREPARATION);
+      mockGameCacheService._data.set(1, { questionId: 999, questionNumber: 2 });
+      mockGameCacheService._questionDeadlines.set(101, deadline);
+      mockGameRepository.getLateDeliveryContext.mockResolvedValue({
+        deadline,
+        hasExistingAnswer: false,
+      });
+
+      const dto = {
+        gameId: 1,
+        participantId: 5,
+        questionId: 101,
+        answer: 'delayed in transit',
+        // Written while the question was still open.
+        submittedAt: new Date(deadline - 2_000).toISOString(),
+      };
+
+      await service.processAnswer(dto);
+
+      // Kept on time: lateness comes from when the team submitted, not
+      // from when the packet finally arrived.
+      expect(mockGameRepository.saveAnswer).toHaveBeenCalledWith(
+        5,
+        101,
+        'delayed in transit',
+        expect.any(Date),
+        undefined,
+      );
+    });
+
+    it('processAnswer: should not let a late delivery overwrite an existing answer', async () => {
+      const deadline = Date.now() - 5_000;
+      mockGameCacheService._statuses.set(1, GameStatus.LIVE);
+      mockGameCacheService._phases.set(1, GamePhase.PREPARATION);
+      mockGameCacheService._data.set(1, { questionId: 999, questionNumber: 2 });
+      mockGameRepository.getLateDeliveryContext.mockResolvedValue({
+        deadline,
+        hasExistingAnswer: true,
+      });
+
+      const result = await service.processAnswer({
+        gameId: 1,
+        participantId: 5,
+        questionId: 101,
+        answer: 'second thoughts',
+        submittedAt: new Date(deadline - 2_000).toISOString(),
+      });
+
+      expect(result).toBeNull();
+      expect(mockGameRepository.saveAnswer).not.toHaveBeenCalled();
+    });
+
+    it('processAnswer: should reject a delivery long after its question closed', async () => {
+      const deadline = Date.now() - 10 * 60_000;
+      mockGameCacheService._statuses.set(1, GameStatus.LIVE);
+      mockGameCacheService._phases.set(1, GamePhase.ANSWERING);
+      mockGameCacheService._data.set(1, { questionId: 999, questionNumber: 5 });
+      mockGameRepository.getLateDeliveryContext.mockResolvedValue({
+        deadline,
+        hasExistingAnswer: false,
+      });
+
+      const result = await service.processAnswer({
+        gameId: 1,
+        participantId: 5,
+        questionId: 101,
+        answer: 'far too late',
+        submittedAt: new Date(deadline - 2_000).toISOString(),
+      });
+
+      expect(result).toBeNull();
+      expect(mockGameRepository.saveAnswer).not.toHaveBeenCalled();
+    });
+
+    it('processAnswer: should reject a delivery for a question that never started', async () => {
+      mockGameCacheService._statuses.set(1, GameStatus.LIVE);
+      mockGameCacheService._phases.set(1, GamePhase.ANSWERING);
+      mockGameCacheService._data.set(1, { questionId: 999, questionNumber: 5 });
+      mockGameRepository.getLateDeliveryContext.mockResolvedValue({
+        deadline: undefined,
+        hasExistingAnswer: false,
+      });
+
+      const result = await service.processAnswer({
+        gameId: 1,
+        participantId: 5,
+        questionId: 101,
+        answer: 'never asked',
+        submittedAt: new Date().toISOString(),
+      });
+
       expect(result).toBeNull();
       expect(mockGameRepository.saveAnswer).not.toHaveBeenCalled();
     });
