@@ -116,6 +116,7 @@ jobs:
           timeout: 60s
           command_timeout: 15m
           script: |
+            set -euo pipefail
             cd /opt/what-where-when-server
             git pull origin main
             export NODE_OPTIONS="--max-old-space-size=2560"
