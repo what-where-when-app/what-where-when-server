@@ -15,6 +15,7 @@ import { GameEngineService } from '../service/game-engine.service';
 import { WsJwtGuard } from '../guards/ws-jwt.guard';
 import { WsExceptionsFilter } from '../filters/ws-exceptions.filter';
 import type {
+  AddManualAnswerDto,
   AdjustTimeDto,
   DisputeDto,
   JoinGameDto,
@@ -41,6 +42,7 @@ export enum AdminRequestEvent {
   PrepareQuestion = 'admin:prepare_question', // Triggers preparation state of the question
   StartQuestion = 'admin:start_question', // Triggers the start of a specific question cycle
   JudgeAnswer = 'admin:judge_answer', // Submits host's verdict (correct/wrong) for a team's answer
+  AddManualAnswer = 'admin:add_manual_answer', // Adds a bare (unjudged) answer row for a team that answered on paper
   AdjustTime = 'admin:adjust_time', // Adds or subtracts seconds from the current active timer
   PauseTimer = 'admin:pause_timer', // Pauses the current question timer
   ResumeTimer = 'admin:resume_timer', // Resumes the current question timer
@@ -388,6 +390,27 @@ export class GameEngineGateway
     if (socketId) {
       this.emitWsRoom(socketId, PlayerResponseEvent.HistoryUpdate, history);
     }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage(AdminRequestEvent.AddManualAnswer)
+  async handleAddManualAnswer(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: AddManualAnswerDto,
+  ) {
+    await this.ensureAdmin(data.gameId, client);
+
+    const result = await this.gameService.addManualAnswer(
+      data.gameId,
+      data.participantId,
+      data.questionId,
+    );
+
+    this.emitWsRoom(
+      this.getAdminRoom(data.gameId),
+      AdminResponseEvent.AnswerUpdate,
+      result,
+    );
   }
 
   @SubscribeMessage(PlayerRequestEvent.Dispute)

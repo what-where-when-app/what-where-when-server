@@ -507,6 +507,44 @@ export class GameEngineService implements OnModuleInit {
     }
   }
 
+  /**
+   * Lets the host add a bare, unjudged answer row for a team that couldn't
+   * submit digitally (e.g. answered on paper). It's judged afterward through
+   * the normal judgeAnswer flow, so no separate verdict UI is needed.
+   */
+  async addManualAnswer(
+    gameId: number,
+    participantId: number,
+    questionId: number,
+  ): Promise<AnswerDomain> {
+    const questionSettings =
+      await this.gameRepository.getQuestionSettings(questionId);
+    if (!questionSettings || questionSettings.gameId !== gameId) {
+      throw new Error('Question not found or does not belong to this game');
+    }
+
+    const participants =
+      await this.gameRepository.getParticipantsByGame(gameId);
+    if (!participants.some((p) => p.id === participantId)) {
+      throw new Error('Participant not found or does not belong to this game');
+    }
+
+    const existing = await this.gameRepository.getAnswerForParticipantAndQuestion(
+      participantId,
+      questionId,
+    );
+    if (existing) {
+      throw new Error('This team already has an answer for this question');
+    }
+
+    return this.gameRepository.saveAnswer(
+      participantId,
+      questionId,
+      '',
+      new Date(),
+    );
+  }
+
   async pauseTimer(gameId: GameId) {
     const secondsLeft = await this.calculateRemainingSeconds(gameId);
     this.stopTimer(gameId);
